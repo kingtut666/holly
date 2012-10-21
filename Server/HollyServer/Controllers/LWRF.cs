@@ -11,12 +11,12 @@ namespace HollyServer
 {
     public class LWRF
     {
-        public delegate void OnOffEventHandler(object sender, int Room, int Device, bool state);
-        public delegate void AllOffEventHandler(object sender, int Room);
-        public delegate void MoodEventHandler(object sender, int Room, int Mood);
-        public delegate void DimEventHandler(object sender, int Room, int Device, int pct);
-        public delegate void HeatEventHandler(object sender, int Room, int State);
-        public delegate void RawEventHandler(object sender, string RawData);
+        public delegate void OnOffEventHandler(object sender, OnOffEventArgs e);
+        public delegate void AllOffEventHandler(object sender, AllOffEventArgs e);
+        public delegate void MoodEventHandler(object sender, MoodEventArgs e);
+        public delegate void DimEventHandler(object sender, DimEventArgs e);
+        public delegate void HeatEventHandler(object sender, HeatEventArgs e);
+        public delegate void RawEventHandler(object sender, RawEventArgs e);
 
         public event OnOffEventHandler OnOffEvent;
         /// <summary>
@@ -24,25 +24,33 @@ namespace HollyServer
         /// matches :Room, Device, and State
         /// </summary>
         public Regex OnOffRegEx = new Regex("...,!R(?<Room>.)D(?<Device>[.^h])F(?<State>.)|");
+#pragma warning disable 67
         public event AllOffEventHandler AllOffEvent;
+#pragma warning restore 67
         /// <summary>
         /// Regex for All off
         /// Matches: Room
         /// </summary>
         public Regex AllOffRegEx = new Regex("...,!R(?<Room>.)Fa");
+#pragma warning disable 67
         public event MoodEventHandler MoodEvent;
+#pragma warning restore 67
         /// <summary>
         /// Regex for Mood
         /// Matches: Room, Mood
         /// </summary>
         public Regex MoodRegEx = new Regex("...,!R(?<Room>.)FmP(?<mood>.)|");//"000,!R"+ Room + "FmP" + mood + "|"
+#pragma warning disable 67
         public event DimEventHandler DimEvent;
+#pragma warning restore 67
         /// <summary>
         /// Regex for Dim
         /// Matches: Room, Device, State
         /// </summary>
         public Regex DimRegEx = new Regex("...,!R(?<Room>.)D(?<Device>.)FdP(?<State>..)|");//"000,!R" + Room + "D" + Device + "FdP" + pstr + "|"
+#pragma warning disable 67
         public event HeatEventHandler HeatEvent;
+#pragma warning restore 67
         /// <summary>
         /// Regex for Heat commands
         /// Matches: Room, State.
@@ -65,7 +73,7 @@ namespace HollyServer
                     byte[] data = new byte[1024];
                     int recv = sock.ReceiveFrom(data, ref ep);
                     string stringData = Encoding.ASCII.GetString(data, 0, recv);
-                    RawEvent(this,stringData);
+                    RawEvent(this, new RawEventArgs(stringData));
                     Match OnOffMatch = OnOffRegEx.Match(stringData);
                     Match AllOffMatch = AllOffRegEx.Match(stringData);
                     Match MoodMatch = MoodRegEx.Match(stringData);
@@ -74,10 +82,10 @@ namespace HollyServer
                     if (OnOffMatch.Success)
                     {
                         EventArgs e = new EventArgs();
-                        OnOffEvent(this,
+                        OnOffEvent(this, new OnOffEventArgs(
                             int.Parse(OnOffMatch.Groups["Room"].Value),
                             int.Parse(OnOffMatch.Groups["Device"].Value),
-                            bool.Parse(OnOffMatch.Groups["State"].Value));
+                            bool.Parse(OnOffMatch.Groups["State"].Value)));
                     }
                 }
             }

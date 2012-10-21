@@ -2,15 +2,31 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+
+#ifndef WIN32
 #include <unistd.h>
+
+#else
+#include "pgetopt/pgetopt.h"
+#define getopt(a,b,c) pgetopt(a,b,c)
+#define optarg poptarg
+
+#include <io.h>
+#define read(a,b,c) _read(a,b,c)
+
+#include <windows.h>
+
+#endif
 
 bool started = false;
 
 int main(int argc, char* argv[]){
+	SetDllDirectory("D:\\devel\\github\\libfreenect-build\\lib\\Debug");
+
 	char *server = "127.0.0.1";
 	char *s_port = 0;
 	bool help = false;
-	bool forever = false;
+	bool forever = true;
 	int c;
 	bool reconnect = true;
 	bool audiotest = false;
@@ -41,8 +57,8 @@ int main(int argc, char* argv[]){
 		audioout_setup();		
 		char *buffer = (char*)malloc(32 * 2);
 		while(true){
-			read(0, buffer, 32*2);
-			audioout_write(buffer, 32);
+			if(read(0, buffer, 32*2)!=-1)
+				audioout_write(buffer, 32);
 		}	
 
 

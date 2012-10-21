@@ -49,9 +49,6 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="NAudio">
-      <HintPath>..\NAudio 1.5\NAudio.dll</HintPath>
-    </Reference>
     <Reference Include="Newtonsoft.Json">
       <HintPath>..\Json45r7\Bin\Net40\Newtonsoft.Json.dll</HintPath>
     </Reference>
@@ -68,19 +65,20 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Audio\AudioForward.cs" />
     <Compile Include="Audio\AudioOut.cs" />
     <Compile Include="Audio\AudioProto.cs" />
     <Compile Include="Audio\AudioProtoConnection.cs" />
     <Compile Include="Audio\AudioRecog.cs" />
+    <Compile Include="Audio\AudioRecog_CMUSphinx.cs" />
+    <Compile Include="Audio\AudioRecog_SAPI.cs" />
+    <Compile Include="Audio\CMUSphinx_Interop.cs" />
     <Compile Include="Controllers\AlarmClock.cs" />
     <Compile Include="Controllers\IControllable.cs" />
     <Compile Include="Controllers\XBMCProto\Audio.cs" />
     <Compile Include="Controllers\XBMCProto\JSONParser.cs" />
     <Compile Include="Controllers\XBMCProto\JSONRPCQueryResult.cs" />
     <Compile Include="Controllers\XBMCProto\TVShow.cs" />
-    <Compile Include="JSON.cs" />
-    <Compile Include="Plumbing\FIFOStream.cs" />
+    <Compile Include="EventArgClasses.cs" />
     <Compile Include="Plumbing\Command.cs" />
     <Compile Include="Controllers\LWRF.cs" />
     <Compile Include="Form1.cs">
@@ -93,7 +91,6 @@
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Audio\SpeechOut.cs" />
-    <Compile Include="Audio\WavFile.cs" />
     <Compile Include="Plumbing\Settings.cs" />
     <Compile Include="World\Device.cs" />
     <Compile Include="Plumbing\DeviceCapabilities.cs" />
@@ -145,7 +142,16 @@
       <Install>true</Install>
     </BootstrapperPackage>
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\KingTutUtils\KingTutUtils.csproj">
+      <Project>{0ca925ed-0a5d-4bc4-a077-6e03124035f0}</Project>
+      <Name>KingTutUtils</Name>
+    </ProjectReference>
+  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <PropertyGroup>
+    <PostBuildEvent>copy /Y C:\Users\ian\Downloads\cmusphinx-pocketsphinx.tar\cmusphinx-pocketsphinx\pocketsphinx\bin\Debug\pocketsphinx.dll $(TargetDir)</PostBuildEvent>
+  </PropertyGroup>
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.
   <Target Name="BeforeBuild">

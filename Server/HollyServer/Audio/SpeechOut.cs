@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Speech.Synthesis;
 using System.IO;
+using KingTutUtils;
 
 namespace HollyServer
 {

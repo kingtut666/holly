@@ -26,6 +26,7 @@ namespace HollyServer
         string mFriendly;
         Dictionary<string, string> mArgs;
         Object mInstance;
+        bool mDisabled;
 
         public Device(string ID, string friendlyname, EDeviceClass dclass, EDeviceProtocol proto, 
             DeviceCapabilities caps, Dictionary<string,string> args)
@@ -76,6 +77,15 @@ namespace HollyServer
         {
             get { return mInstance; }
             set { mInstance = value; }
+        }
+        public bool Enabled
+        {
+            get { return !mDisabled; }
+        }
+        public void Disable()
+        {
+            //TODO: Actually use Enabled in the code
+            mDisabled = true;
         }
     }
 }

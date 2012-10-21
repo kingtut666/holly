@@ -10,6 +10,9 @@ using System.IO;
 using System.Globalization;
 using System.Threading;
 using System.Speech.Recognition.SrgsGrammar;
+using System.Speech.AudioFormat;
+using System.Timers;
+using KingTutUtils;
 
 namespace HollyServer
 {
@@ -27,7 +30,9 @@ namespace HollyServer
         public static Form1 server;
         string s_port = "31337";
         AudioProto p;
-        AudioRecog r;
+        //AudioRecog_SAPI recogSAPI;
+        //AudioRecog_CMUSphinx recogSphinx;
+        AudioRecogHolder Recog;
         LWRF lwrf;
         static public SpeechOut Talker;
         TheWorld theWorld;
@@ -35,12 +40,12 @@ namespace HollyServer
         List<IControllable> mControllables;
         AlarmClock clk;
         Dictionary<string, Tuple<bool, bool, string>> clkActions;
-        AudioForward af;
+        System.Timers.Timer tick;
 
         delegate void updateLog_Callback(string txt, ELogLevel level, ELogType whom);
         public static void updateLog(string txt, ELogLevel level, ELogType whom)
         {
-            if (level == ELogLevel.Debug) return;
+            if (level == ELogLevel.Debug && (whom != ELogType.SpeechRecog && whom != ELogType.Net)) return;
             if (Form1.server.txtLog.InvokeRequired)
             {
                 Form1.updateLog_Callback d = new updateLog_Callback(updateLog);
@@ -48,6 +53,9 @@ namespace HollyServer
             }
             else
             {
+                System.Diagnostics.Trace.WriteLine(DateTime.Now.ToString("yyMMdd HH:mm:ss: [") +
+                    level.ToString() + "] " +
+                    txt);
                 Form1.server.txtLog.AppendText(DateTime.Now.ToString("yyMMdd HH:mm:ss: [") + 
                     level.ToString()+"] " +
                     txt + "\n");
@@ -59,16 +67,20 @@ namespace HollyServer
             InitializeComponent();
             
             Form1.server = this;
-            r = new AudioRecog();
-            r.RecognitionSuccessful += new AudioRecog.RecognitionSuccessfulDelegate(r_RecognitionSuccessful);
+            //recogSAPI = new AudioRecog_SAPI();
+            //recogSAPI.RecognitionSuccessful += new AudioRecog.RecognitionSuccessfulDelegate(r_RecognitionSuccessful);
+            //recogSphinx = new AudioRecog_CMUSphinx();
+            //recogSphinx.RecognitionSuccessful += new AudioRecog.RecognitionSuccessfulDelegate(r_RecognitionSuccessful);
             Thread.CurrentThread.CurrentCulture = new CultureInfo("en-GB");
             Thread.CurrentThread.CurrentUICulture = new CultureInfo("en-GB");
             Talker = new SpeechOut();
             Talker.AddEndpoint("beast", null);
             lwrf = new LWRF();
-            af = new AudioForward();
             clkActions = new Dictionary<string, Tuple<bool, bool,string>>();
-
+            Recog = new AudioRecogHolder();
+            Recog.RegisterRecogEngine(new AudioRecog_SAPI());
+            Recog.RegisterRecogEngine(new AudioRecog_CMUSphinx());
+            Recog.RecognitionSuccessful += new AudioRecogHolder.RecognitionSuccessfulDelegate(Recog_RecognitionSuccessful);
             mControllables = new List<IControllable>();
 
 
@@ -84,6 +96,13 @@ namespace HollyServer
                 foreach (Device d in devs)
                 {
                     XBMC xbmc = new XBMC(d.ID, d.Args["port"], d.Args["user"], d.Args["pass"]);
+                    if (!xbmc.VerifyConnection())
+                    {
+                        Form1.updateLog("Couldn't connect to XBMC at " + d.ID + ":" + d.Args["port"], 
+                            ELogLevel.Warning, ELogType.XBMC);
+                        d.Disable();
+                        continue;
+                    }
                     xbmc.ControllableEvent += new IControllableEventDelegate(xbmc_ControllableEvent);
                     mControllables.Add(xbmc);
                     d.Instance = xbmc;
@@ -98,19 +117,90 @@ namespace HollyServer
             List<string> done = new List<string>();
             foreach (IControllable ic in mControllables)
             {
-                string nm = ic.GetName();
-                if (!done.Contains(nm))
-                {
-                    SrgsDocument srgs = ic.CreateGrammarDoc();
-                    if (nm != null && nm != "" && srgs != null) r.AddGrammar(nm, srgs);
-                    done.Add(nm);
-                }
+                Recog.AddControllable(ic);
             }
 
+
+            p = new AudioProto();
+            p.Listen(s_port);
+            p.NewAudioStream += new AudioProto.NewAudioStreamDelegate(p_NewAudioStream);
+
+
+            prog1.Minimum = 0;
+            prog1.Maximum = 250;
+            prog2.Minimum = 0;
+            prog2.Maximum = 250;
+            prog3.Minimum = 0;
+            prog3.Maximum = 250;
+            progCmd1.Minimum = 0;
+            progCmd1.Maximum = 250;
+            progCmd2.Minimum = 0;
+            progCmd2.Maximum = 250;
+            progCmd3.Minimum = 0;
+            progCmd3.Maximum = 250;
+            UpdateControlD += new UpdateControlDelegate(UpdateControl);
+            tick = new System.Timers.Timer();
+            tick.Elapsed += new ElapsedEventHandler(tick_Elapsed);
+            tick.Interval = 1000;
+            tick.Start();
         }
 
-        void xbmc_ControllableEvent(IControllable from, IControllableEventArgs e)
+        void Recog_RecognitionSuccessful(object sender, RecognitionSuccessfulEventArgs e)
         {
+            if (!FilterRecognised(e.ID, e.res))
+            {
+                if (e.res.Confidence == 0.80f)
+                {
+                    string path2 = @"C:\Users\ian\Desktop\audio\" + e.res.Text + "." + DateTime.Now.ToString("HHmmssff") + ".wav";
+                    using (Stream outputStream = new FileStream(path2, FileMode.Create))
+                    {
+                        e.res.WriteToWaveStream(outputStream);
+                        //outputStream.Close(); //Dispose via using
+                    }
+                }
+
+                return;
+            }
+            
+            //TODO: This may need a cleanup
+
+            string path = @"C:\Users\ian\Desktop\audio\" + e.res.Text + "." + DateTime.Now.ToString("HHmmssff") + ".wav";
+            using (Stream outputStream = new FileStream(path, FileMode.Create))
+            {
+                e.res.Audio.WriteToWaveStream(outputStream);
+                //outputStream.Close(); //Dispose via using
+            }
+
+
+            if (p != null)
+            {
+                p.RecogSuccessful(EndpointFromID(e.ID));
+
+                //play beep
+                List<FIFOStream> fouts = p.GetOutputStreams(EndpointFromID(e.ID));
+                if (fouts == null || fouts.Count == 0)
+                {
+                    Form1.updateLog("ERR: Couldn't find stream for remote: " + txtRemoteID.Text,
+                        ELogLevel.Error, ELogType.SpeechRecog | ELogType.Audio);
+                }
+                else
+                {
+                    foreach (FIFOStream fout in fouts)
+                    {
+                        AudioOut.PlayWav(fout, @"C:\Users\ian\Desktop\beep3.wav");
+                    }
+                }
+            }
+            foreach (IControllable c in mControllables)
+            {
+                if (e.res.GrammarName == c.GetName())
+                    if (c.OnSpeechRecognised(EndpointFromID(e.ID), e.res)) break; //first one to action
+            }
+        }
+
+        void xbmc_ControllableEvent(object sender, IControllableEventArgs e)
+        {
+            //IControllable from = sender as IControllable;
             XBMCEventArgs xe = e as XBMCEventArgs;
 
             Device audio_src = null;
@@ -171,10 +261,11 @@ namespace HollyServer
             }
         }
 
-        void clk_ControllableEvent(IControllable from, IControllableEventArgs Event)
+        void clk_ControllableEvent(object sender, IControllableEventArgs Event)
         {
             //TODO: Should only play in current location
             //TODO: Should play an alarm
+            //IControllable from = sender as IControllable;
             if (Event.Action == "tick")
             {
                 Form1.updateLog("Clock strikes", ELogLevel.Debug, ELogType.AlarmClock);
@@ -214,67 +305,54 @@ namespace HollyServer
             }
         }
 
-        void r_RecognitionSuccessful(string ID, System.Speech.Recognition.RecognitionResult res)
+        bool FilterRecognised(string ID, RecognitionSuccess res)
         {
             Stream s = new MemoryStream();
-            res.Audio.WriteToAudioStream(s);
+            if(res.Audio != null) res.Audio.WriteToAudioStream(s);
             double avg = AudioProtoConnection.AnalyseStream(s);
-
             double noise = p.GetNoiseLevel(ID);
 
+            ///////// Confidence
             if (res.Confidence < 0.90)
             {
                 Form1.updateLog("   Confidence too low, skipping", ELogLevel.Info, ELogType.SpeechRecog);
-                return;
+                return false;
             }
             Form1.updateLog("Recog hit: (conf=" + res.Confidence.ToString() + ",volume=" +
-                avg.ToString() + ",noise="+noise.ToString()+") " + res.Text, ELogLevel.Info, ELogType.SpeechRecog);
-            if (avg < noise+50)
-            {
-                Form1.updateLog("     Volume too low (avg="+avg.ToString()+" noise="+noise.ToString()+"), skipping", ELogLevel.Info, ELogType.SpeechRecog);
-                return;
-            }
-            if (p != null)
-            {
-                p.RecogSuccessful(ID);
+                avg.ToString() + ",noise=" + noise.ToString() + ") " + res.Text, ELogLevel.Info, ELogType.SpeechRecog);
 
-                //play beep
-                List<FIFOStream> fouts = p.GetOutputStreams(ID);
-                if (fouts == null || fouts.Count == 0)
+            ////////// Sound vs Noise
+            if (avg < noise + 50 || avg<100)
+            {
+                Form1.updateLog("     Volume too low (avg=" + avg.ToString() + " noise=" + noise.ToString() + "), skipping", ELogLevel.Info, ELogType.SpeechRecog);
+                return false;
+            }
+
+            ////////// Word Confidence
+            foreach (int idx in res.WordConfidence.Keys)
+            {
+                if (res.WordConfidence[idx].Item2 < 0.4)
                 {
-                    Form1.updateLog("ERR: Couldn't find stream for remote: " + txtRemoteID.Text, 
-                        ELogLevel.Error, ELogType.SpeechRecog | ELogType.Audio);
-                    return;
-                }
-                foreach (FIFOStream fout in fouts)
-                {
-                    AudioOut.PlayWav(fout, @"C:\Users\ian\Desktop\beep3.wav");
+                    Form1.updateLog("   Word confidence too low, skipping (wd=" + res.WordConfidence[idx].Item1 + 
+                        ", conf=" + res.WordConfidence[idx].Item2.ToString() + ")", ELogLevel.Info, ELogType.SpeechRecog);
+                    return false;
                 }
             }
-            foreach (IControllable c in mControllables)
-            {
-                if (res.Grammar.Name == c.GetName())
-                    if (c.OnSpeechRecognised(ID, res)) break; //first one to action
-            }
-            
+
+
+            UpdateControl(ID, (int)avg);
+
+            return true;
         }
 
-        private void butListen_Click(object sender, EventArgs e)
-        {
-            updateLog("Startup, listening on port " + s_port, ELogLevel.Info, ELogType.Net);
 
-            p = new AudioProto();
-            p.Listen(s_port);
-            p.NewAudioStream += new AudioProto.NewAudioStreamDelegate(p_NewAudioStream);
-        }
-
-  
-        void p_NewAudioStream(Stream stream, string ID)
+        void p_NewAudioStream(object sender, NewAudioStreamEventArgs e)
         {
 
             //Loud enough, send it
-            stream.Seek(0, SeekOrigin.Begin);
-            r.RunRecognition(stream, ID);
+            e.stream.Seek(0, SeekOrigin.Begin);
+            //recogSAPI.RunRecognition(stream, ID);
+            Recog.RunRecognition(e.stream, e.ID);
         }
 
         private void butStart_Click(object sender, EventArgs e)
@@ -301,21 +379,6 @@ namespace HollyServer
 	0x64, 0x61, 0x74, 0x61, // Subchunk2ID = "data"
 	0x00, 0x00, 0x00, 0x00, // Subchunk2Size = NumSamples * NumChannels * BitsPerSample / 8 (will be overwritten later)
 };
-        private void butCreate_Click(object sender, EventArgs e)
-        {
-            uint samples = 0;
-            BinaryWriter wav = new BinaryWriter(File.OpenWrite("c:\\Users\\ian\\Desktop\\" + DateTime.Now.ToString("HHmmss") + ".wav"));
-            wav.Write(wavheader);
-
-            wav.Write(wavheader, 0, wavheader.Length);
-            samples += (uint)wavheader.Length;
-
-            wav.Seek(4, SeekOrigin.Begin);
-            wav.Write((uint)(samples + 36));
-            wav.Seek(40, SeekOrigin.Begin);
-            wav.Write((uint)samples);
-            wav.Close();
-        }
 
         private void butRecogWav_Click(object sender, EventArgs e)
         {
@@ -325,7 +388,7 @@ namespace HollyServer
             DialogResult res = dlg.ShowDialog();
             if (res == System.Windows.Forms.DialogResult.OK)
             {
-                r.RunRecognition(dlg.FileName, "WAV");
+                Recog.RunRecognition(dlg.FileName, "WAV");
             }
         }
 
@@ -405,6 +468,7 @@ namespace HollyServer
                 }
                 catch (Exception ex)
                 {
+                    UnreferencedVariable.Ignore(ex);
                     Form1.updateLog("Couldn't parse time: " + txtAlarmTime.Text, ELogLevel.Error, 
                         ELogType.AlarmClock);
                     when = DateTime.Now.AddSeconds(10);
@@ -424,21 +488,79 @@ namespace HollyServer
             }
         }
 
-        private void butAudioForwardRec_Click(object sender, EventArgs e)
+        void tick_Elapsed(object sender, ElapsedEventArgs e)
         {
-            af.Run();
+            UpdateControl("", 0);
+        }
+        public delegate void UpdateControlDelegate(string ID, int volume);
+        public UpdateControlDelegate UpdateControlD;
+        void UpdateControl(string ID, int volume){
+            if (lblProg1.InvokeRequired)
+            {
+                lblProg1.Invoke(UpdateControlD, new object[] { ID, volume });
+                return;
+            }
+            Dictionary<string, double> levels = p.SummariseNoiseLevels();
+            foreach (string id in levels.Keys)
+            {
+                if (id.StartsWith("192.168.1.32"))
+                {
+                    int lvl = (int)levels[id];
+                    if (lvl > 250) lvl = 250;
+                    lblProg1.Text = id; 
+                    prog1.Value = lvl;
+                    txtProg1.Text = lvl.ToString();
+                    if (ID == id)
+                    {
+                        if(volume>250) progCmd1.Value = 250;
+                        else progCmd1.Value = volume;
+                        txtProgCmd1.Text = volume.ToString();
+                    }
+                }
+                else if (id.StartsWith("192.168.1.190"))
+                {
+                    int lvl = (int)levels[id];
+                    if (lvl > 250) lvl = 250;
+                    lblProg2.Text = id; 
+                    prog2.Value = lvl;
+                    txtProg2.Text = lvl.ToString();
+                    if (ID == id)
+                    {
+                        if (volume > 250) progCmd2.Value = 250;
+                        else progCmd2.Value = volume;
+                        txtProgCmd2.Text = volume.ToString();
+                    }
+                }
+                else if (id.StartsWith("192.168.1.191"))
+                {
+                    int lvl = (int)levels[id];
+                    if (lvl > 250) lvl = 250;
+                    lblProg3.Text = id;
+                    prog3.Value = lvl;
+                    txtProg3.Text = lvl.ToString();
+                    if (ID == id)
+                    {
+                        if (volume > 250) progCmd3.Value = 250;
+                        else progCmd3.Value = volume;
+                        txtProgCmd3.Text = volume.ToString();
+                    }
+                }
+            }
+
         }
 
-        private void butAudioForwardStop_Click(object sender, EventArgs e)
+        private void ckUseSphinx_CheckedChanged(object sender, EventArgs e)
         {
-            af.Stop();
+
         }
 
-        private void button1_Click(object sender, EventArgs e)
+        public static string EndpointFromID(string ID)
         {
-            XBMC xbmc = new XBMC("127.0.0.1", "8080", "xbmc", "test");
-            xbmc.ListAudioGenres();
+            int idx = ID.IndexOf('@');
+            if (idx >= 1) return ID.Substring(0, idx);
+            return ID;
         }
+
 
 
     }

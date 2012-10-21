@@ -1,6 +1,10 @@
 #include "hollyclient.h"
 #include <stdio.h>
 
+
+#ifndef WIN32
+//ALSA support
+
 #define ALSA_PCM_NEW_HW_PARAMS_API
 #include <alsa/asoundlib.h>
 
@@ -366,3 +370,22 @@ int audioout_close(){
 	return 0;
 }
 
+#else 
+
+int audioout_setup(){
+	return 1;
+}
+
+int audioout_write(char *data, int nframes){
+	return 1;
+}
+
+int audioout_close(){
+	return 1;
+}
+
+
+
+
+
+#endif

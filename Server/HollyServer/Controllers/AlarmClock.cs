@@ -58,11 +58,12 @@ namespace HollyServer
 
         public string GetName()
         {
-            return "Alarm Clock";
+            return "Alarm_Clock";
         }
 
+        //Grammars
         SrgsDocument currentSrgsDoc = null;
-        public System.Speech.Recognition.SrgsGrammar.SrgsDocument CreateGrammarDoc()
+        public System.Speech.Recognition.SrgsGrammar.SrgsDocument CreateGrammarDoc_SRGS()
         {
             if (currentSrgsDoc != null) return currentSrgsDoc;
 
@@ -84,12 +85,57 @@ namespace HollyServer
             currentSrgsDoc = doc;
             return currentSrgsDoc;
         }
+        static CMUSphinx_GrammarDict currentCMUSphinxDoc = null;
+        public CMUSphinx_GrammarDict CreateGrammarDoc_JSGF()
+        {
+            if (currentCMUSphinxDoc != null) return currentCMUSphinxDoc;
+            CMUSphinx_GrammarDict ret = new CMUSphinx_GrammarDict();
+            ret.GrammarName = GetName();
 
-        public bool OnSpeechRecognised(string ID, System.Speech.Recognition.RecognitionResult result)
+            StringBuilder bld = new StringBuilder();
+            ret.JSGFRuleStart("<ISAWAKE>", bld);
+            ret.JSGFRuleAddChoicesStart(bld, new List<string>(new string[] { "i'm awake", "turn off the alarm", "i am awake" }));
+            ret.JSGFRuleAddChoicesEnd(bld);
+            ret.JSGFRuleEnd("<ISAWAKE>", bld);
+
+            ret.JSGFRuleStart("<ROOT>", bld);
+            ret.JSGFRuleAddToken(bld, "Holly");
+            ret.JSGFRuleAddToken(bld, "<ISAWAKE>");
+            ret.JSGFRuleAddToken(bld, "please");
+            ret.JSGFRuleEnd("<ROOT>", bld);
+
+            ret.JSGFSetRootRule("<ROOT>");
+
+            ret.BuildJSGFGrammarAndDict();
+            
+            currentCMUSphinxDoc = ret;
+            return ret;
+        }
+        public CMUSphinx_GrammarDict CreateGrammarDoc_FSG()
+        {
+            if (currentCMUSphinxDoc != null) return currentCMUSphinxDoc;
+            CMUSphinx_GrammarDict ret = new CMUSphinx_GrammarDict();
+            ret.GrammarName = GetName();
+
+            CMUSphinx_FSGState root = ret.FSGCreate(ret.GrammarName);
+            CMUSphinx_FSGState s;// = ret.FSGTransitionToNewState(root, "Holly i'm awake");
+            //ret.FSGGroupStates(s, ret.FSGGetEndState());
+            s = ret.FSGTransitionToNewState(root, "Holly i am awake");
+            ret.FSGGroupStates(s, ret.FSGGetEndState());
+            s = ret.FSGTransitionToNewState(root, "Holly turn off the alarm please");
+            ret.FSGGroupStates(s, ret.FSGGetEndState());
+
+            ret.BuildFSGGrammarAndDict();
+
+            currentCMUSphinxDoc = ret;
+            return ret;
+        }
+
+        public bool OnSpeechRecognised(string ID, RecognitionSuccess result)
         {
             string matched = "";
             string cmd = "";
-            if (result.Semantics.ContainsKey("command")) cmd = result.Semantics["command"].Value.ToString();
+            if (result.getSemanticValuesAsString("command")!=null) cmd = result.getSemanticValuesAsString("command");
 
             if (cmd == "turn off alarm")
             {

@@ -1,9 +1,16 @@
 #include "hollyclient.h"
 #include <stdio.h>
-#include <libfreenect/libfreenect.h>
-#include <libfreenect/libfreenect-audio.h>
 #include <signal.h>
 
+#ifndef WIN32
+#include <libfreenect/libfreenect.h>
+#include <libfreenect/libfreenect-audio.h>
+#else
+//remember to add the freenect include folder to your include path
+#include "libfreenect.h"
+#include "libfreenect-audio.h"
+#pragma comment(lib, "freenect.lib")
+#endif
 
 extern bool started;
 
@@ -14,7 +21,7 @@ void in_callback(freenect_device* dev, int num_samples,
                  int32_t* mic1, int32_t* mic2,
                  int32_t* mic3, int32_t* mic4,
                  int16_t* cancelled, void *unknown) {
-	//printf("%d samples received.\n", num_samples);
+	printf("%d samples received.\n", num_samples);
 	net_audiodata(num_samples, mic2);
 }
 

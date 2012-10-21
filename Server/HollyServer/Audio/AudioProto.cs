@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Net.Sockets;
 using System.Threading;
+using KingTutUtils;
 
 namespace HollyServer
 {
@@ -11,13 +12,10 @@ namespace HollyServer
     {
         TcpListener srv;
         List<AudioProtoConnection> clients;
-        Object clients_lk;
-        string _className = "AudioProto";
 
         public AudioProto()
         {
             clients = new List<AudioProtoConnection>();
-            clients_lk = new Object();
         }
 
         public int Listen(string port)
@@ -41,7 +39,7 @@ namespace HollyServer
             AudioProtoConnection c = new AudioProtoConnection(clnt);
             c.AudioConnClosed += new AudioProtoConnection.AudioConnClosedDelegate(c_AudioConnClosed);
             c.AudioReadyForRecog += new AudioProtoConnection.AudioReadyForRecogDelegate(c_AudioReadyForRecog);
-            lock (clients_lk)
+            lock (clients)
             {
                 clients.Add(c);
             }
@@ -55,16 +53,16 @@ namespace HollyServer
             if (Form1.server.StartOnConnect()) Start(c.EndPoint);
         }
 
-        void c_AudioReadyForRecog(System.IO.Stream s, string ID)
+        void c_AudioReadyForRecog(object sender, AudioReadyForRecogEventArgs e)
         {
-            OnNewAudioStream(s, ID);
+            OnNewAudioStream(e.s, e.ID);
         }
-        void c_AudioConnClosed(AudioProtoConnection conn)
+        void c_AudioConnClosed(object sender, AudioConnClosedEventArgs e)
         {
             //remove conn from clients
-            lock (clients_lk)
+            lock (clients)
             {
-                clients.Remove(conn);
+                clients.Remove(e.conn);
             }
         }
 
@@ -78,51 +76,68 @@ namespace HollyServer
 
         public void Start(string ID)
         {
-            lock (clients_lk)
+            List<AudioProtoConnection> toStart = new List<AudioProtoConnection>();
+            lock (clients)
             {
                 foreach (AudioProtoConnection a in clients)
                 {
-                    if (ID == a.EndPoint || ID == "") a.Start();
+                    if (ID == a.EndPoint || ID == "") toStart.Add(a);
                 }
+            }
+            foreach (AudioProtoConnection a in toStart)
+            {
+                a.Start();
             }
         }
         public void Stop(string ID)
         {
-            lock (clients_lk)
+            List<AudioProtoConnection> toStop = new List<AudioProtoConnection>();
+            lock (clients)
             {
                 foreach (AudioProtoConnection a in clients)
                 {
-                    if (ID == a.EndPoint || ID == "") a.Stop();
+                    if (ID == a.EndPoint || ID == "") toStop.Add(a);
                 }
+            }
+            foreach (AudioProtoConnection a in toStop)
+            {
+                a.Stop();
             }
         }
 
-        public delegate void NewAudioStreamDelegate(System.IO.Stream stream, string ID);
+        public delegate void NewAudioStreamDelegate(object sender, NewAudioStreamEventArgs e);
         public event NewAudioStreamDelegate NewAudioStream;
         void OnNewAudioStream(System.IO.Stream newStream, string ID)
         {
             if (NewAudioStream != null)
             {
-                NewAudioStream(newStream, ID);
+                NewAudioStream(this, new NewAudioStreamEventArgs(newStream, ID));
             }
         }
 
         public void RecogSuccessful(string ID)
         {
-            lock (clients_lk)
+            List<AudioProtoConnection> recognised = new List<AudioProtoConnection>();
+            lock (clients)
             {
                 foreach (AudioProtoConnection conn in clients)
                 {
                     if (conn.EndPoint == ID)
-                        conn.RecogSuccessful();
+                    {
+                        recognised.Add(conn);
+                    }
                 }
+            }
+            foreach (AudioProtoConnection conn in recognised)
+            {
+                conn.PurgeBuffers();
             }
         }
 
         public List<FIFOStream> GetOutputStreams(string ID)
         {
             List<FIFOStream> ret = new List<FIFOStream>();
-            lock (clients_lk)
+            lock (clients)
             {
                 foreach (AudioProtoConnection conn in clients)
                 {
@@ -134,7 +149,7 @@ namespace HollyServer
         }
         public double GetNoiseLevel(string ID)
         {
-            lock (clients_lk)
+            lock (clients)
             {
                 foreach (AudioProtoConnection conn in clients)
                 {
@@ -143,6 +158,17 @@ namespace HollyServer
                 }
             }
             return 0;
+        }
+        public Dictionary<string, double> SummariseNoiseLevels()
+        {
+            Dictionary<string, double> ret = new Dictionary<string, double>();
+            foreach (AudioProtoConnection conn in clients)
+            {
+                ret.Add(conn.EndPoint, conn.NoiseLevel);
+            }
+
+
+            return ret;
         }
     }
 }

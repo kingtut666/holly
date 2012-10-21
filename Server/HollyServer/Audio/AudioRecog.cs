@@ -2,15 +2,11 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.IO;
 using System.Speech.Recognition;
 using System.Speech.AudioFormat;
-using System.Globalization;
-using System.Threading;
 using System.Reflection;
-using System.Speech.Recognition.SrgsGrammar;
-using System.Text.RegularExpressions;
-using System.Xml;
+using System.IO;
+using KingTutUtils;
 
 namespace HollyServer
 {
@@ -46,445 +42,482 @@ namespace HollyServer
         }
     }
 
-    public class AudioRecog
+    public class RecognitionSuccess
     {
-        Dictionary<string, SrgsDocument> mDocs;
-        List<AudioInstance> engines;
-
-        public AudioRecog()
+        //TODO: Abstract out Audio as well
+        public RecognitionSuccess()
         {
-            engines = new List<AudioInstance>();
-            //mGrammar = CreateColorGrammar();
-            mDocs = new Dictionary<string, SrgsDocument>();
-            AddRecognizer(false);
+            Semantics = new Dictionary<string, string>();
+            Confidence = 1.0F;
+            WordConfidence = new Dictionary<int, Tuple<string, float>>();
+            Text = "";
+            Audio = null;
+            GrammarName = "";
+            EngineName = "";
+            Engine = null;
         }
-        public void RemoveGrammar(string name)
+        public RecognitionSuccess(AudioRecog r, RecognitionResult rres)
         {
-            lock (mDocs)
+            EngineName = "SAPI";
+            Engine = r;
+            Semantics = new Dictionary<string, string>();
+            if (rres.Semantics != null)
             {
-                if (mDocs.ContainsKey(name)) mDocs.Remove(name);
-            }
-
-            lock (engines)
-            {
-                foreach (AudioInstance ai in engines)
+                foreach (KeyValuePair<String, SemanticValue> s in rres.Semantics)
                 {
-                    if (!ai.Active)
-                    {
-                        //ai.engine.UnloadAllGrammars();
-                        lock (mDocs)
-                        {
-                            Grammar todel = null;
-                            foreach(Grammar g in ai.engine.Grammars){
-                                if(g.Name == name){
-                                    todel = g;
-                                    break;
+                    Semantics.Add(s.Key, s.Value.Value.ToString()); //need the ToString() as this may be an int etc
+                }
+            }
+            Audio = rres.Audio;
+            Text = rres.Text;
+            GrammarName = rres.Grammar.Name;
+            Confidence = rres.Confidence;
+            WordConfidence = new Dictionary<int, Tuple<string, float>>();
+            int i = 0;
+            foreach (System.Speech.Recognition.RecognizedWordUnit wd in rres.Words)
+            {
+                WordConfidence.Add(i, new Tuple<string, float>(wd.Text, wd.Confidence));
+                i++;
+            }
+        }
+
+
+        public AudioRecog Engine;
+
+        //Confidence of each word in the match
+        public Dictionary<int, Tuple<string, float>> WordConfidence;
+
+        //Confidence 0-1
+        public float Confidence;
+
+        //Matched Audio
+        public RecognizedAudio Audio;
+        Stream mStream = null;
+        public void SetAudioStream(Stream s)
+        {
+            mStream = s;
+        }
+        public void WriteToWaveStream(Stream s)
+        {
+            if (Audio != null)
+            {
+                Audio.WriteToWaveStream(s);
+                return;
+            }
+            if (mStream != null)
+            {
+                WavUtils.SaveWav(mStream, 16, s);
+            }
+        }
+
+        //matched string
+        string mText;
+        public string Text
+        {
+            get { return mText; }
+            set { mText = value.ToUpper(); }
+        }
+
+        //Grammar on which match occurred
+        public string GrammarName;
+
+        public string EngineName;
+
+        //semantics
+        Dictionary<string, string> Semantics;
+        public int getSemanticValueAsInt(string key)
+        {
+            if (!Semantics.ContainsKey(key)) return -1;
+            int ret;
+            if (!Int32.TryParse(Semantics[key], out ret)) return -1;
+            return ret;
+        }
+        public string getSemanticValuesAsString(string key)
+        {
+            if (!Semantics.ContainsKey(key)) return null;
+            return Semantics[key];
+        }
+    }
+
+
+
+    public class AudioRecogHolder
+    {
+        class RecognitionAttempt_Engine
+        {
+            public AudioRecog Engine;
+            public DateTime TimeStarted;
+            public DateTime TimeRecog;
+            public DateTime TimeComplete;
+            public RecognitionSuccess Success;
+            public bool isComplete; 
+            public bool isRunning;
+
+            public RecognitionAttempt_Engine(AudioRecog eng)
+            {
+                Engine = eng;
+                isRunning = false;
+                isComplete = false;
+                Success = null;
+            }
+            public void RunRecognition(Stream s, string ID)
+            {
+                try
+                {
+                    TimeStarted = DateTime.Now;
+                    isRunning = true;
+                    Engine.RunRecognition(s, ID);
+                }
+                catch (Exception e)
+                {
+                    Form1.updateLog("ERR: RecognitionAttempt_Engine.RunRecog(stream): " + e.Message, ELogLevel.Warning, ELogType.SpeechRecog);
+                }
+            }
+            public void RunRecognition(string file, string ID)
+            {
+                try {
+                TimeStarted = DateTime.Now;
+                isRunning = true;
+                Engine.RunRecognition(file, ID);
                                 }
-                            }
-                            ai.engine.UnloadGrammar(todel);
-                        }
-                        ai.NeedNewGrammar = false;
-                    }
-                    else ai.NeedNewGrammar = true;
-                }
-            }
-        }
-        public void AddGrammar(string name, SrgsDocument doc)
-        {
-            lock (mDocs)
-            {
-                if (mDocs.ContainsKey(name)) mDocs[name] = doc;
-                mDocs.Add(name, doc);
-            }
-
-            lock (engines)
-            {
-                foreach (AudioInstance ai in engines)
+                catch (Exception e)
                 {
-                    if (!ai.Active)
-                    {
-                        //ai.engine.UnloadAllGrammars();
-                        lock (mDocs)
-                        {
-                            ai.engine.LoadGrammar(CreateGrammar(name, doc));
-                            //foreach (string nm in mDocs.Keys)
-                            //{
-                            //    ai.engine.LoadGrammar(CreateGrammar(nm, mDocs[nm]));
-                            //}
-                        }
-                        ai.NeedNewGrammar = false;
-                    }
-                    else ai.NeedNewGrammar = true;
+                    Form1.updateLog("ERR: RecognitionAttempt_Engine.RunRecog(file): " + e.Message, ELogLevel.Warning, ELogType.SpeechRecog);
                 }
             }
         }
 
-        static string disallowedSrgsChars = @"[?*+|()^$/;.=<>\[\]{}\\ \t\r\n]";
-        public static string SrgsCleanupID(string id)
+        class RecognitionAttempt
         {
-            Regex r = new Regex(disallowedSrgsChars);
-            return r.Replace(id, "_");
-        }
-        Dictionary<EDeviceCapabilities, SrgsRule> caps_rules;
-        SrgsRuleRef ActionsFromCapabilities(DeviceCapabilities caps, SrgsDocument doc)
-        {
-            SrgsRule r;
-            if (caps_rules.Keys.Contains(caps.Caps))
+            public string ID;
+            public Dictionary<AudioRecog, RecognitionAttempt_Engine> AttemptByEngine; //engine.name, rae
+            public bool isComplete
             {
-                r = caps_rules[caps.Caps];
-            }
-            else
-            {
-                List<string> capsAsString = caps.Actions;
-                if (capsAsString == null || capsAsString.Count == 0) return null;
-                SrgsOneOf actions = new SrgsOneOf();
-                foreach (string s in capsAsString)
+                get
                 {
-                    SrgsItem si = new SrgsItem(s);
-                    //si.Add(new SrgsSemanticInterpretationTag(" out = \"" + s + "\";"));
-                    si.Add(new SrgsNameValueTag("action", s));
-                    actions.Add(si);
+                    foreach (RecognitionAttempt_Engine e in AttemptByEngine.Values)
+                    {
+                        if (e.isComplete == false) return false;
+                    }
+                    return true;
                 }
-                r = new SrgsRule(SrgsCleanupID("caps_" + caps.CapsAsIntString), actions);
-                doc.Rules.Add(r);
-                caps_rules.Add(caps.Caps, r);
             }
-            //return new SrgsRuleRef(r, "action");
-            return new SrgsRuleRef(r);
-        }
-        
-        
-
-        SrgsDocument currentSrgsDoc;
-        Grammar CreateGrammar(string name, SrgsDocument doc)
-        {
-            Grammar g = new Grammar(doc);
-            g.Name = name;
-            return g;
-        }
-        SrgsDocument CreateGrammarDoc(TheWorld theWorld){
-            //reset caches
-            caps_rules = new Dictionary<EDeviceCapabilities, SrgsRule>();
-            if (currentSrgsDoc == null)
+            public bool WasSuccessful
             {
-
-                currentSrgsDoc = new SrgsDocument();
-
-                Thread.CurrentThread.CurrentCulture = new CultureInfo("en-GB");
-                Thread.CurrentThread.CurrentUICulture = new CultureInfo("en-GB");
-                //Grammar: Holly, [<courtesy>] <action> (<class>|<device>) [<location>] <courtesy>
-                // Courtesy: Please, Thank You, Thanks, Cheers
-                // Action: capabilities
-                // Class: classes
-                // Device: device friendly names
-                // Location: rooms, here, this
-
-                SrgsOneOf start_courtesy = new SrgsOneOf(new string[] { "please" });
-                SrgsOneOf end_courtesy = new SrgsOneOf(new string[] { "thanks", "thank you", "cheers", "please" });
-                SrgsOneOf actionItemLocation_choices = new SrgsOneOf();
-                foreach (Room rm in theWorld.ListRooms())
+                get
                 {
-                    if (rm.Name == "") continue;
-                    Dictionary<string, SrgsRuleRef> actionsPerDevice = new Dictionary<string, SrgsRuleRef>();
-                    foreach (Device d in rm.ListDevices())
+                    if (Result == null) return false;
+                    return true;
+                }
+            }
+            RecognitionSuccess best = null;
+            public RecognitionSuccess Result
+            {
+                //TODO: Abstract this out, and make it runtime configurable
+                get
+                {
+                    if (!isComplete) return null;
+                    if (best != null) return best;
+                    AudioRecog cmu = null;
+                    AudioRecog sapi = null;
+                    foreach (AudioRecog a in AttemptByEngine.Keys)
                     {
-                        SrgsRuleRef caps_ruleref = ActionsFromCapabilities(d.Capabilities, currentSrgsDoc);
-                        if (caps_ruleref == null) continue;
-                        string cl = SoundsLike.Get(d.Class, false);
-                        if (cl != "" && !actionsPerDevice.ContainsKey(cl))
+                        if (a.GetName() == AudioRecog_SAPI.Name) sapi = a;
+                        else if (a.GetName() == AudioRecog_CMUSphinx.Name) cmu = a;
+                        else
                         {
-                            actionsPerDevice.Add(cl, caps_ruleref);
-                        }
-                        if (d.FriendlyName != "")
-                        {
-                            if (!actionsPerDevice.ContainsKey(d.FriendlyName))
-                                actionsPerDevice.Add(d.FriendlyName, caps_ruleref);
+                            Form1.updateLog("WARN: Unknown AudioRecof in RecognitionAttempt.Result:" + a.GetName(),
+                                ELogLevel.Warning, ELogType.SpeechRecog);
                         }
                     }
-                    //actionsperdevice.Value + actionsperdevice.Key+room
-                    if (actionsPerDevice.Count == 0) continue; //nothing in the room
-                    SrgsOneOf action_items = new SrgsOneOf();
-                    bool action_items_valid = false;
-                    foreach (string item in actionsPerDevice.Keys)
+                    RecognitionSuccess cmuS = AttemptByEngine[cmu].Success;
+                    RecognitionSuccess sapiS = AttemptByEngine[sapi].Success;
+
+                    if (sapiS == null && cmuS == null)
                     {
-                        if (item == "") continue;
-                        SrgsRule ai_gb = new SrgsRule(SrgsCleanupID(rm.Name + "_" + item));
-                        ai_gb.Add(actionsPerDevice[item]);
-                        ai_gb.Add(new SrgsItem(item));
-                        currentSrgsDoc.Rules.Add(ai_gb);
-                        //SrgsItem ai_gb_item = new SrgsItem(new SrgsRuleRef(ai_gb, "item"));
-                        SrgsItem ai_gb_item = new SrgsItem(new SrgsRuleRef(ai_gb));
-                        ai_gb_item.Add(new SrgsNameValueTag("item", item));
-                        action_items.Add(ai_gb_item);
-                        action_items_valid = true;
+                        Form1.updateLog("Speech recog failed", ELogLevel.Debug, ELogType.SpeechRecog);
+                        return null;
                     }
-                    if (!action_items_valid) continue;
-                    SrgsRule ail_gb = new SrgsRule(SrgsCleanupID(rm.Name + "__ail"), action_items);
-                    if (rm != theWorld.CurrentLocation)
+
+                    if (cmuS == null) Form1.updateLog("Sphinx: Failed", ELogLevel.Info, ELogType.SpeechRecog);
+                    else Form1.updateLog("Sphinx: " + cmuS.Text + " (conf=" + cmuS.Confidence + ")",
+                        ELogLevel.Info, ELogType.SpeechRecog);
+                    TimeSpan cmuRuntimeTS = (AttemptByEngine[cmu].TimeComplete - AttemptByEngine[cmu].TimeStarted);
+                    string cmuRuntime = cmuRuntimeTS.ToString(@"s\.fff");
+                    string cmuStart = AttemptByEngine[cmu].TimeStarted.ToString("HH:mm:ss.fff");
+                    string cmuEnd = AttemptByEngine[cmu].TimeComplete.ToString("HH:mm:ss.fff");
+                    string cmuRecog = AttemptByEngine[cmu].TimeRecog.ToString("HH:mm:ss.fff");
+                    string cmuRecogtime = (AttemptByEngine[cmu].TimeRecog - AttemptByEngine[cmu].TimeStarted).ToString(@"s\.fff");
+                    Form1.updateLog("  Runtime " + cmuRuntime + "s (Start: " + cmuStart + " End: " + cmuEnd + ")",
+                        ELogLevel.Debug, ELogType.SpeechRecog);
+                    if (cmuS != null)
                     {
-                        //SrgsItem loc1 = new SrgsItem("in the " + rm.Name);
-                        SrgsItem loc1 = new SrgsItem(0, 1, "in the " + rm.Name);
-                        loc1.Add(new SrgsNameValueTag("room", rm.Name));
-                        ail_gb.Add(loc1);
+                        Form1.updateLog("  Recognition took " + cmuRecogtime +
+                        "s (Start: " + cmuStart +
+                        " Recog: " + cmuRecog + ")",
+                        ELogLevel.Debug, ELogType.SpeechRecog);
+                    }
+
+
+                    if (sapiS == null) Form1.updateLog("SAPI:   Failed", ELogLevel.Info, ELogType.SpeechRecog);
+                    else Form1.updateLog("SAPI:   " + sapiS.Text + " (conf=" + sapiS.Confidence + ")",
+                        ELogLevel.Info, ELogType.SpeechRecog);
+                    Form1.updateLog("  Runtime " +
+                        (AttemptByEngine[sapi].TimeComplete - AttemptByEngine[sapi].TimeStarted).ToString(@"s\.fff") +
+                        "s (Start: " + AttemptByEngine[sapi].TimeStarted.ToString("HH:mm:ss.fff") +
+                        " End: " + AttemptByEngine[sapi].TimeComplete.ToString("HH:mm:ss.fff") + ")",
+                        ELogLevel.Debug, ELogType.SpeechRecog);
+                    if (sapiS != null)
+                    {
+                        Form1.updateLog("  Recognition took " +
+                        (AttemptByEngine[sapi].TimeRecog - AttemptByEngine[sapi].TimeStarted).ToString(@"s\.fff") +
+                        "s (Start: " + AttemptByEngine[sapi].TimeStarted.ToString("HH:mm:ss.fff") +
+                        " Recog: " + AttemptByEngine[sapi].TimeRecog.ToString("HH:mm:ss.fff") + ")",
+                        ELogLevel.Debug, ELogType.SpeechRecog);
+                    }
+
+                    //if SAPI and !Sphinx, SAPI false +ve unless SAPI is >0.9
+                    RecognitionSuccess ret;
+                    if (sapiS != null && cmuS == null)
+                    {
+                        if (sapiS.Confidence < 0.9)
+                        {
+                            Form1.updateLog("   -> False Positive by SAPI", ELogLevel.Info, ELogType.SpeechRecog);
+                            ret = null;
+                        }
+                        else
+                        {
+                            Form1.updateLog("   -> false Negative by Sphinx, maybe, but we trust Sphinx", ELogLevel.Info, ELogType.SpeechRecog);
+                            best = sapiS;
+                            best.Confidence = 0.50f;
+                            ret = null;
+                        }
+                    }
+                    //if !SAPI and Sphinx, SAPI false -ve unless Sphinx is >-5000
+                    else if (sapiS == null && cmuS != null)
+                    {
+                        if (cmuS.Confidence < -5000)
+                        {
+                            Form1.updateLog("   -> False Positive by Sphinx", ELogLevel.Info, ELogType.SpeechRecog);
+                            ret = null;
+                        }
+                        else
+                        {
+                            Form1.updateLog("   -> false Negative by SAPI", ELogLevel.Info, ELogType.SpeechRecog);
+                            best = cmuS;
+                            //normalize Confidence - this should actually do some math, but Spinx confidence is pretty broken
+                            best.Confidence = 0.80f;
+                            ret = best;
+                        }
                     }
                     else
                     {
-                        SrgsOneOf loc = new SrgsOneOf(new string[] { "in the " + rm.Name, "here" });
-                        SrgsItem loc_item = new SrgsItem(0, 1, loc);
-                        //SrgsItem loc_item = new SrgsItem(loc);
-                        loc_item.Add(new SrgsNameValueTag("room", rm.Name));
-                        ail_gb.Add(loc_item);
+                        //if SAPI and Sphinx, buf different text, probable real, but use SAPI words
+                        if (cmuS.Text != sapiS.Text)
+                        {
+                            Form1.updateLog("   -> Different text. Picking SAPI", ELogLevel.Info, ELogType.SpeechRecog);
+                            best = sapiS;
+                            ret = best;
+                        }
+                        //if SAPI and Sphinx, same text, go SAPI but bump confidence to 0.95
+                        else
+                        {
+                            Form1.updateLog("   -> Woot, good match", ELogLevel.Info, ELogType.SpeechRecog);
+                            best = sapiS;
+                            best.Confidence = 0.95f;
+                            ret = best;
+                        }
                     }
-                    currentSrgsDoc.Rules.Add(ail_gb);
-                    //SrgsItem ail_gb_item = new SrgsItem(new SrgsRuleRef(ail_gb, "room"));
-                    SrgsItem ail_gb_item = new SrgsItem(new SrgsRuleRef(ail_gb));
-                    //ail_gb_item.Add(new SrgsNameValueTag("room", rm.Name));
-                    actionItemLocation_choices.Add(ail_gb_item);
-                }
-                SrgsRule root_rule = new SrgsRule("rootrule");
-                root_rule.Add(new SrgsItem("Holly"));
-                root_rule.Add(new SrgsItem(0, 1, start_courtesy));
-                root_rule.Add(actionItemLocation_choices);
-                root_rule.Add(end_courtesy);
-                currentSrgsDoc.Rules.Add(root_rule);
-                currentSrgsDoc.Root = root_rule;
-
-
-                /*
-                SrgsRule root_rule = new SrgsRule("rootrule");
-                root_rule.Add(new SrgsItem("Holly"));
-                SrgsOneOf actions = new SrgsOneOf(new string[]{"turn on", "turn off"});
-                root_rule.Add(actions);
-                SrgsOneOf items = new SrgsOneOf(new string[]{ "the lights", "the light" });
-                root_rule.Add(items);
-                SrgsOneOf location = new SrgsOneOf(new string[]{ "in the bedroom", "in the study", "here"});
-                root_rule.Add(new SrgsItem(0, 1, location));
-                root_rule.Add(new SrgsItem("please"));
-                doc.Rules.Add(root_rule);
-                doc.Root = root_rule;
-                 * */
-
-                XmlWriter xmlout = XmlWriter.Create(@"C:\Users\ian\Desktop\grammar.xml");
-                currentSrgsDoc.WriteSrgs(xmlout);
-                xmlout.Close();
-            }
-            return currentSrgsDoc;
-        }
-
-        private Grammar CreateColorGrammar()
-        {
-            Thread.CurrentThread.CurrentCulture = new CultureInfo("en-GB");
-            Thread.CurrentThread.CurrentUICulture = new CultureInfo("en-GB");
-            // Create a set of color choices.
-            Choices colorChoice = new Choices(new string[] { "red", "green", "blue" });
-            Grammar grammar = new Grammar(colorChoice);
-            grammar.Name = "backgroundColor";
-            return grammar;
-        }
-
-        public AudioInstance AddRecognizer(bool active)
-        {
-            SpeechRecognitionEngine recognizer = new SpeechRecognitionEngine();
-            try
-            {
-                //dumpSupported(recognizer);
-                Thread.CurrentThread.CurrentCulture = new CultureInfo("en-GB");
-                Thread.CurrentThread.CurrentUICulture = new CultureInfo("en-GB");
-                //recognizer.LoadGrammar(CreateGrammar(mTheWorld));
-
-                // Configure the input to the recognizer.
-                recognizer.SetInputToNull();
-
-                // Attach event handlers.
-                recognizer.SpeechRecognized += new EventHandler<SpeechRecognizedEventArgs>(recognizer_SpeechRecognized);
-                recognizer.RecognizeCompleted += new EventHandler<RecognizeCompletedEventArgs>(recognizer_RecognizeCompleted);
-                recognizer.SpeechHypothesized += new EventHandler<SpeechHypothesizedEventArgs>(recognizer_SpeechHypothesized);
-
-                // Perform recognition of the whole file.
-                //Form1.updateLog("Starting asynchronous recognition...");
-
-                AudioInstance ai = new AudioInstance();
-                ai.audioStream = null;
-                ai.ID = null;
-                ai.engine = recognizer;
-                ai.Active = false;
-                ai.NeedNewGrammar = true;
-                //Console.WriteLine("Entering lock: AddRecognizer");
-                lock (engines)
-                {
-                    engines.Add(ai);
-                    if (active) ai.Active = true;
-                }
-                //Console.WriteLine("Exitting lock: AddRecognizer");
-                return ai;
-            }
-            catch (Exception e)
-            {
-                Form1.updateLog("AddStream exception: " + e.ToString(), ELogLevel.Error,
-                    ELogType.Audio | ELogType.SpeechRecog);
-            }
-            return null;
-        }
-
-        AudioInstance getFreeAI(string newID)
-        {
-            AudioInstance ai_todo = null;
-            //Form1.updateLog("RunRecognition: #engines=" + engines.Count + " ");
-            //int i = 0;
-            lock (engines)
-            {
-                foreach (AudioInstance ai in engines)
-                {
-                    //Form1.updateLog("   Engines[" + i.ToString() + "]=(" + (ai.audioStream == null ? "null" : ai.audioStream.ToString()) + ",[" + ai.engine.GetHashCode() + "])");
-                    //i++;
-                    if (!ai.Active)
+                    Form1.updateLog("---------------------------", ELogLevel.Info, ELogType.SpeechRecog);
+                    //clean up result contents
+                    if (ret != null)
                     {
-                        //Form1.updateLog(" ###Doing Recog on " + ai.engine.GetHashCode());
-                        ai_todo = ai;
-                        ai_todo.Active = true;
-                        break;
+                        ret.SetAudioStream(fullStream);
                     }
-                }
-            }
-            //Console.WriteLine("Exitting lock: RunRecognition");
-            if (ai_todo == null)
-            {
-                AudioInstance ai = AddRecognizer(true);
-                //Form1.updateLog(" ###Doing Recog on new " + ai.engine.GetHashCode());
-                ai_todo = ai;
-            }
-            if (ai_todo.NeedNewGrammar)
-            {
-                ai_todo.engine.UnloadAllGrammars();
-                //ai_todo.engine.LoadGrammar(CreateGrammar("the world", currentSrgsDoc));
-                lock (mDocs)
-                {
-                    foreach (string nm in mDocs.Keys)
-                    {
-                        ai_todo.engine.LoadGrammar(CreateGrammar(nm, mDocs[nm]));
-                    }
-                }
-                ai_todo.NeedNewGrammar = false;
-            }
-            ai_todo.audioStream = new MemoryStream();
-            ai_todo.ID = newID;
 
-            return ai_todo;
+                    return ret;
+                }
+            }
+            Stream fullStream = null;
+
+            public RecognitionAttempt(string id, List<AudioRecog> engines)
+            {
+                ID = id;
+                AttemptByEngine = new Dictionary<AudioRecog,RecognitionAttempt_Engine>();
+                foreach (AudioRecog r in engines)
+                {
+                    AttemptByEngine.Add(r, new RecognitionAttempt_Engine(r));
+                }
+            }
+            public void RunRecognition(Stream s)
+            {
+                fullStream = s;
+                foreach (RecognitionAttempt_Engine e in AttemptByEngine.Values)
+                {
+                    e.RunRecognition(s, ID);
+                }
+            }
+            public void RunRecognition(string file)
+            {
+                foreach (RecognitionAttempt_Engine e in AttemptByEngine.Values)
+                {
+                    e.RunRecognition(file, ID);
+                }
+            }
+            public void Completed(AudioRecog engine)
+            {
+                if (!AttemptByEngine.ContainsKey(engine))
+                {
+                    Form1.updateLog("ERR: Complete for unknown engine", ELogLevel.Error, ELogType.SpeechRecog);
+                    return;
+                }
+                AttemptByEngine[engine].TimeComplete = DateTime.Now;
+                AttemptByEngine[engine].isComplete = true;
+                AttemptByEngine[engine].isRunning = false;
+            }
+            public void Recognised(AudioRecog engine, RecognitionSuccess success)
+            {
+                if (!AttemptByEngine.ContainsKey(engine))
+                {
+                    Form1.updateLog("ERR: Complete for unknown engine", ELogLevel.Error, ELogType.SpeechRecog);
+                    return;
+                }
+                AttemptByEngine[engine].TimeRecog = DateTime.Now;
+                AttemptByEngine[engine].Success = success;
+            }
+
+        
+        }
+
+        static List<AudioRecog> RecogEngines = null;
+        Dictionary<string, RecognitionAttempt> attempts;
+        int running = 0;
+
+        public AudioRecogHolder()
+        {
+            if (RecogEngines == null) RecogEngines = new List<AudioRecog>();
+            attempts = new Dictionary<string, RecognitionAttempt>();
+            mControllables = new HashSet<string>();
+        }
+        public bool RegisterRecogEngine(AudioRecog rec)
+        {
+            RecogEngines.Add(rec);
+            rec.RecognitionSuccessful += new AudioRecog.RecognitionSuccessfulDelegate(rec_RecognitionSuccessful);
+            rec.RecognitionComplete += new AudioRecog.RecognitionCompleteDelegate(rec_RecognitionComplete);
+            return true;
+        }
+        HashSet<string> mControllables;
+        public bool AddControllable(IControllable c)
+        {
+            if (!mControllables.Add(c.GetName())) return true; //duplicate
+            foreach (AudioRecog r in RecogEngines)
+            {
+                if (!r.AddControllable(c))
+                    return false;
+            }
+            return true;
         }
         public void RunRecognition(Stream s, string ID)
         {
-            //save stream to file
-            DateTime timestamp = DateTime.Now;
-            //WavFile.SaveWav(s, 16, timestamp.ToString("HHmmssff") + ".wav");
+            //Currently, Sphinx can only handle one at a time. So if a recog is running, bin this one.
+            if (running > 0) return;
 
-            AudioInstance ai_todo = getFreeAI(ID);
-            ai_todo.audioStream = s;
-            s.Seek(0, SeekOrigin.Begin);
-            ai_todo.engine.SetInputToAudioStream(s,
-                            new SpeechAudioFormatInfo(16000, AudioBitsPerSample.Sixteen, AudioChannel.Mono));
-            ai_todo.engine.RecognizeAsync(RecognizeMode.Single);
+
+            try
+            {
+                RecognitionAttempt a = new RecognitionAttempt(ID, RecogEngines);
+                attempts.Add(ID, a);
+                a.RunRecognition(s);
+            }
+            catch (Exception e)
+            {
+                Form1.updateLog("ERR: AudioRecogHolder.RunRecog(file): " + e.Message, ELogLevel.Warning, ELogType.SpeechRecog);
+            }
         }
         public void RunRecognition(string file, string ID)
         {
-            //find an unused recognizer
-            AudioInstance ai_todo = getFreeAI(ID);
-            ai_todo.engine.SetInputToWaveFile(file);
-            ai_todo.engine.RecognizeAsync(RecognizeMode.Single);
-        }
-        
-        void recognizer_RecognizeCompleted(object sender, RecognizeCompletedEventArgs e)
-        {
-            int senderHash = sender.GetHashCode();
-            lock (engines)
-            {
-                foreach (AudioInstance ai in engines)
+            //Currently, Sphinx can only handle one at a time. So if a recog is running, bin this one.
+            if (running > 0) return;
+            running++;
+
+            try {
+            RecognitionAttempt a = new RecognitionAttempt(ID, RecogEngines);
+            attempts.Add(ID, a);
+            a.RunRecognition(file);
+                                            }
+                catch (Exception e)
                 {
-                    if (ai.engine.GetHashCode() == senderHash)
-                    {
-                        //ai.engine.RecognizeAsyncCancel();
-                        ai.engine.SetInputToNull();
-                        ai.audioStream = null;
-                        ai.Active = false;
-                    }
+                    Form1.updateLog("ERR: AudioRecogHolder.RunRecog(file): " + e.Message, ELogLevel.Warning, ELogType.SpeechRecog);
                 }
+        }
+
+        void rec_RecognitionComplete(object sender, RecognitionCompleteEventArgs e)
+        {
+            if (!attempts.ContainsKey(e.ID))
+            {
+                Form1.updateLog("ERR: Received complete for non-existent query: " + e.ID, 
+                    ELogLevel.Error, ELogType.SpeechRecog);
+                return;
+            }
+            attempts[e.ID].Completed(e.engine);
+            if (attempts[e.ID].isComplete)
+            {
+                RecognitionAttempt a = attempts[e.ID];
+                attempts.Remove(e.ID);
+                running--;
+                if (a.Result != null) OnRecognitionSuccessful(a.Result.Engine, e.ID, a.Result);
             }
         }
-        void recognizer_SpeechHypothesized(object sender, SpeechHypothesizedEventArgs e)
+        void rec_RecognitionSuccessful(object sender, RecognitionSuccessfulEventArgs e)
         {
-            //Form1.updateLog("Hypothesis: " + e.Result.Text + " (conf=" + e.Result.Confidence.ToString() + ")[" + sender.GetHashCode() + "]");
-        }
-        void recognizer_SpeechRecognized(object sender, SpeechRecognizedEventArgs e)
-        {
-            Form1.updateLog("RecogSpeech: " + e.Result.Text + " (conf=" + e.Result.Confidence.ToString() + ")[" + sender.GetHashCode() + "]",
-                ELogLevel.Info, ELogType.SpeechRecog);
-            //find the ai
-            int senderHash = sender.GetHashCode();
-            string ID = "";
-            lock (engines)
+            if (!attempts.ContainsKey(e.ID))
             {
-                foreach (AudioInstance ai in engines)
-                {
-                    if (ai.engine.GetHashCode() == senderHash)
-                    {
-                        ID = ai.ID;
-                    }
-                }
+                Form1.updateLog("ERR: Received recognition for non-existent query: " + e.ID,
+                    ELogLevel.Error, ELogType.SpeechRecog);
+                return;
             }
-
-
-            string path = @"C:\Users\ian\Desktop\audio\" + e.Result.Text+ "." + DateTime.Now.ToString("HHmmssff") + ".wav";
-             using (Stream outputStream = new FileStream(path, FileMode.Create))
-                {
-                  e.Result.Audio.WriteToWaveStream(outputStream);
-                  outputStream.Close();
-                }
-
-            
-
-            OnRecognitionSuccessful(ID, e.Result);
+            attempts[e.ID].Recognised(e.engine, e.res);
         }
 
-        public delegate void RecognitionSuccessfulDelegate(string ID, RecognitionResult res);
+        public delegate void RecognitionSuccessfulDelegate(object sender, RecognitionSuccessfulEventArgs e);
         public event RecognitionSuccessfulDelegate RecognitionSuccessful;
-        void OnRecognitionSuccessful(string ID, RecognitionResult res)
+        protected void OnRecognitionSuccessful(AudioRecog engine, string ID, RecognitionSuccess res)
         {
             if (RecognitionSuccessful != null)
             {
-                RecognitionSuccessful(ID, res);
+                RecognitionSuccessful(this, new RecognitionSuccessfulEventArgs(engine, ID, res));
             }
         }
 
-        void dumpSupported(SpeechRecognitionEngine rec)
+    }
+
+    abstract public class AudioRecog
+    {
+        abstract public string GetName();
+        abstract public void RunRecognition(Stream s, string ID);
+        abstract public void RunRecognition(string file, string ID);
+
+        abstract public bool AddControllable(IControllable c);
+
+        public delegate void RecognitionCompleteDelegate(object sender, RecognitionCompleteEventArgs e);
+        public event RecognitionCompleteDelegate RecognitionComplete;
+        protected void OnRecognitionComplete(string ID)
         {
-            RecognizerInfo info = rec.RecognizerInfo;
-            string AudioFormats = "";
-            foreach (SpeechAudioFormatInfo fmt in info.SupportedAudioFormats)
+            if (RecognitionComplete != null)
             {
-                AudioFormats += "  EF="+fmt.EncodingFormat.ToString();
-                AudioFormats += " Bps=" + fmt.AverageBytesPerSecond.ToString();
-                AudioFormats += " bps=" + fmt.BitsPerSample.ToString();
-                AudioFormats += " BA=" + fmt.BlockAlign.ToString();
-                AudioFormats += " CC=" + fmt.ChannelCount.ToString();
-                AudioFormats += " Sps=" + fmt.SamplesPerSecond.ToString() + "\n";
+                RecognitionComplete(this, new RecognitionCompleteEventArgs(this, ID));
             }
-            string AdditionalInfo = "";
-            foreach (string key in info.AdditionalInfo.Keys)
-            {
-                AdditionalInfo += String.Format("      {0}: {1}\n", key, info.AdditionalInfo[key]);
-            }
-            Form1.updateLog(String.Format(
-                               "Name:                 {0 }\n" +
-                               "Description:          {1} \n" +
-                           "SupportedAudioFormats:\n" +
-                           "{2} " +
-                           "Culture:              {3} \n" +
-                           "AdditionalInfo:       \n" +
-                           " {4}\n",
-                           info.Name.ToString(),
-                           info.Description.ToString(),
-                           AudioFormats,
-                           info.Culture.ToString(),
-                           AdditionalInfo), ELogLevel.Debug, ELogType.SpeechRecog);
         }
+
+        public delegate void RecognitionSuccessfulDelegate(object sender, RecognitionSuccessfulEventArgs e);
+        public event RecognitionSuccessfulDelegate RecognitionSuccessful;
+        protected void OnRecognitionSuccessful(string ID, RecognitionSuccess res)
+        {
+            if (RecognitionSuccessful != null)
+            {
+                RecognitionSuccessful(this, new RecognitionSuccessfulEventArgs(this, ID, res));
+            }
+        }
+
     }
 }

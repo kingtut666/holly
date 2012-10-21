@@ -4,9 +4,9 @@ using System.Linq;
 using System.Text;
 using System.IO;
 
-namespace HollyServer
+namespace KingTutUtils
 {
-    public class WavFile
+    public class WavUtils : IDisposable
     {
         static byte[] wavheader_16bit = {
 	0x52, 0x49, 0x46, 0x46, // ChunkID = "RIFF"
@@ -34,21 +34,21 @@ namespace HollyServer
 	0x64, 0x61, 0x74, 0x61, // Subchunk2ID = "data"
 	0x00, 0x00, 0x00, 0x00, // Subchunk2Size = NumSamples * NumChannels * BitsPerSample / 8 (will be overwritten later)
 };
-        public static void SaveWav(Stream s, int BitsPerSample, string filename)
+        public static void SaveWav(Stream source, int BitsPerSample, Stream destination)
         {
             try
             {
-                BinaryWriter wav = new BinaryWriter(File.OpenWrite("c:\\Users\\ian\\Desktop\\" + filename));
-                if(BitsPerSample == 16) wav.Write(wavheader_16bit);
+                BinaryWriter wav = new BinaryWriter(destination);
+                if (BitsPerSample == 16) wav.Write(wavheader_16bit);
                 else wav.Write(wavheader_32bit); //32 bit
-                s.Seek(0, SeekOrigin.Begin);
+                source.Seek(0, SeekOrigin.Begin);
                 int offset = 0;
                 byte[] k_bytes = new byte[2048];
                 int read;
 
-                while (offset < s.Length)
+                while (offset < source.Length)
                 {
-                    read = s.Read(k_bytes, 0, 2048);
+                    read = source.Read(k_bytes, 0, 2048);
                     if (read == 0) break;
                     offset += read;
                     wav.Write(k_bytes, 0, read);
@@ -59,40 +59,89 @@ namespace HollyServer
                 wav.Seek(40, SeekOrigin.Begin);
                 wav.Write((uint)offset);
                 wav.Close();
-                s.Seek(0, SeekOrigin.Begin);
+                source.Seek(0, SeekOrigin.Begin);
             }
             catch (Exception e)
             {
-                Form1.updateLog("Write failed: " + e.ToString(), ELogLevel.Warning,
-                    ELogType.Audio | ELogType.File);
+                throw new Exception("Write failed: " + e.ToString());
             }
-
         }
-
-        BinaryWriter wav;
-        int samples;
-        public WavFile(int BitsPerSample, string filename)
+        public static void SaveWav(Stream s, int BitsPerSample, string filename)
         {
-            wav = new BinaryWriter(File.OpenWrite("c:\\Users\\ian\\Desktop\\" + DateTime.Now.ToString("HHmmss") + ".wav"));
+            SaveWav(s, BitsPerSample, File.OpenWrite(filename));
+        }
+        public static bool ReadWav(string filename, MemoryStream outStream)
+        {
+            //TODO: This is pretty inefficient
+            try
+            {
+                using (FileStream f = new FileStream(filename, FileMode.Open, FileAccess.Read))
+                {
+                    byte[] buf = new byte[1024];
+                    int i;
+                    f.Seek(wavheader_16bit.Length, SeekOrigin.Begin);
+                    while ((i = f.Read(buf, 0, 1024)) > 0)
+                    {
+                        outStream.Write(buf, 0, i);
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                throw new Exception("ERR: Failed to read wav file: " + e.Message);
+            }
+            return true;
+        }
+        BinaryWriter wav;
+        object wavLock;
+        int samples;
+        public WavUtils(int BitsPerSample, string filename)
+        {
+            wav = new BinaryWriter(File.OpenWrite(filename));
             if (BitsPerSample == 16) wav.Write(wavheader_16bit);
             else wav.Write(wavheader_32bit); //32 bit
             samples = 0;
+            wavLock = new object();
         }
         public void Write(byte[] data, int index, int count)
         {
-            wav.Write(data, index, count);
+            lock (wavLock)
+            {
+                if (wav == null) return;
+                wav.Write(data, index, count);
+            }
             samples += count;
         }
         public void Close()
         {
-            BinaryWriter a = wav;
-            wav = null;
+            BinaryWriter a = null;
+            lock (wavLock)
+            {
+                a = wav;
+                wav = null;
+            }
+            if (a == null) return;
             a.Seek(4, SeekOrigin.Begin);
             a.Write((uint)(samples + 36));
             a.Seek(40, SeekOrigin.Begin);
             a.Write((uint)samples);
             a.Close();
         }
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                // dispose managed resources
+                if (wav != null) wav.Dispose();
+            }
+            // free native resources
+        }
 
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
     }
 }
+

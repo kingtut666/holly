@@ -5,22 +5,22 @@ using System.Text;
 using System.Net.Sockets;
 using System.IO;
 using System.Timers;
+using KingTutUtils;
+using System.Threading;
 
 namespace HollyServer
 {
-    public class AudioProtoConnection
+    public class AudioProtoConnection : IDisposable
     {
-        const int buffer_length = 4; //seconds
-        const int buffers_per_s = 8;
-
-
+        const int buffer_length = 6; //seconds
+        const int buffers_per_s = 2;
+        const int bitrate = 16000;
+        const int noise_window_size = 3; //seconds
 
         TcpClient mClnt;
         NetworkStream mStream;
+        
         FIFOStream mAudioOut;
-        byte[] rdHdr = new byte[4];
-        byte[] rdBuffer;
-        int rdBuffer_len = 0;
         bool saveToFile = false;
         int chunkSize = 512;  //256 samples of 16 bits
 
@@ -34,34 +34,21 @@ namespace HollyServer
         byte[] msg_data = ASCIIEncoding.ASCII.GetBytes("DATA");
         byte[] msg_audioout = ASCIIEncoding.ASCII.GetBytes("AUDIOOUT");
 
-        byte[]  wavheader = {
-	0x52, 0x49, 0x46, 0x46, // ChunkID = "RIFF"
-	0x00, 0x00, 0x00, 0x00, // Chunksize (will be overwritten later)
-	0x57, 0x41, 0x56, 0x45, // Format = "WAVE"
-	0x66, 0x6d, 0x74, 0x20, // Subchunk1ID = "fmt "
-	0x10, 0x00, 0x00, 0x00, // Subchunk1Size = 16
-	0x01, 0x00, 0x01, 0x00, // AudioFormat = 1 (linear quantization) | NumChannels = 1
-	0x80, 0x3e, 0x00, 0x00, // SampleRate = 16000 Hz
-	0x00, 0xfa, 0x00, 0x00, // ByteRate = SampleRate * NumChannels * BitsPerSample/8 = 64000
-	0x04, 0x00, 0x20, 0x00, // BlockAlign = NumChannels * BitsPerSample/8 = 4 | BitsPerSample = 32
-	0x64, 0x61, 0x74, 0x61, // Subchunk2ID = "data"
-	0x00, 0x00, 0x00, 0x00, // Subchunk2Size = NumSamples * NumChannels * BitsPerSample / 8 (will be overwritten later)
-};
-
-
         public bool Startable = false;
         public bool Started = false;
 
-        BinaryWriter wav;
-        WavFile wav_out;
+        WavUtils wav_out;
+
         string mEndpoint;
-        Stream mStreamOut;
 
         //Queue of data blocks
-        Queue<Tuple<byte[], int, int>> blockQueue = new Queue<Tuple<byte[], int, int>>();
+        Queue<byte[]> blockQueue = new Queue<byte[]>();
         Queue<Tuple<double, int>> avgQueue = new Queue<Tuple<double, int>>();
         double runningAverage = 0;
         int runningNSamples = 0;
+
+        Thread readThread;
+        
 
         bool isEqual(byte[] a, byte[] b, int len)
         {
@@ -77,127 +64,105 @@ namespace HollyServer
         {
             mClnt = clnt;
             mStream = mClnt.GetStream();
-            mAudioOut = new FIFOStream(chunkSize); //TODO: implement my own stream
-            ReadHeader();
+            mAudioOut = new FIFOStream(chunkSize);
             streamsLock = new Object();
             CreateAudioBuffers();
-            tick = new Timer();
+            tick = new System.Timers.Timer();
             tick.Elapsed += new ElapsedEventHandler(tick_Elapsed);
             mEndpoint = mClnt.Client.RemoteEndPoint.ToString();
             mAudioOut.DataAvailable += new FIFOStream.DataAvailableDelegate(mAudioOut_DataAvailable);
 
+            readThread = new Thread(new ThreadStart(NetReader_ThreadProc));
+            readThread.Start();
+        }
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                // dispose managed resources
+                if (mAudioOut != null) mAudioOut.Dispose();
+                if (tick != null) tick.Dispose();
+                if (wav_out != null) wav_out.Dispose();
+            }
+            // free native resources
         }
 
-        void mAudioOut_DataAvailable()
+        public void Dispose()
         {
-            while (mAudioOut.QueueLength > 0)
-            {
-                WriteAudioOut();
-            }
+            Dispose(true);
+            GC.SuppressFinalize(this);
         }
 
         public string EndPoint { get { return mEndpoint; } }
         public FIFOStream AudioOut { get { return mAudioOut; } }
 
-        int tick_ct = 0;
-        void tick_Elapsed(object sender, ElapsedEventArgs e)
+  
+        #region Receive and handle
+        void NetReader_ThreadProc()
         {
-            //Form1.updateLog("Tick ("+DateTime.Now.ToString("MMss.ff")+"): cur_stream_no="+cur_stream_no.ToString()+"  num_buffers="+num_buffers.ToString());
-            if (_remaining != 0) _remaining = 0;
-            if (cur_stream_no < num_buffers) cur_stream_no++;
-            //else tick.Stop();
-            tick_ct++;
-            if (tick_ct < (buffers_per_s * 3)) return; //each window is 3s
-            tick_ct = 0;
-
-            Queue<Tuple<byte[], int, int>> blk = blockQueue;
-            blockQueue = new Queue<Tuple<byte[], int, int>>();
-
-            //average blockQueue
-            double tot = 0;
-            int nFrames = 0;
-            while (blk.Count > 0)
+            byte[] netHead = new byte[4];
+            int netHeadOffset = 0;
+            byte[] netBody = new byte[1024];
+            int netBodyOffset = 0;
+            while (true)
             {
-                Tuple<byte[], int, int> b = blk.Dequeue(); //data,from,count
-                int nSamples = b.Item3 / 4;
-                for (int j = 0; j < nSamples; j++)
+                //header
+                while (netHeadOffset < 4)
                 {
-                    //16-bit is largest SpeechRecog can handle. Convert from 32 bit.
-                    int d = BitConverter.ToInt32(b.Item1, b.Item2 + j * 4);
-                    d = d >> 16;
-                    if (d < 0) d = 0 - d;
-                    tot += (short)d;
-                    nFrames++;
+                    int i = mStream.Read(netHead, netHeadOffset, (int)(4 - netHeadOffset));
+                    netHeadOffset += i;
                 }
+                netHeadOffset = 0;
+                netBodyOffset = 0;
+
+                int dataLen = BitConverter.ToInt32(netHead, 0);
+                dataLen = System.Net.IPAddress.NetworkToHostOrder(dataLen);
+
+                if (netBody.Length < dataLen) netBody = new byte[dataLen];
+
+                //body
+                while (netBodyOffset < dataLen)
+                {
+                    int i = mStream.Read(netBody, netBodyOffset, (dataLen - netBodyOffset));
+                    netBodyOffset += i;
+                }
+
+                //handle
+                HandleBlock(netBody, dataLen);
             }
+            
 
-
-            double dd = runningAverage;
-            dd = dd * runningNSamples;
-            dd += tot;
-            runningNSamples += nFrames;
-            if (runningNSamples != 0) runningAverage = dd / runningNSamples;
-            else runningAverage = 0;
-
-
-            //Add to avgQueue
-            Tuple<double,int> newAvg = new Tuple<double,int>(tot, nFrames);
-            avgQueue.Enqueue(newAvg);
-
-            while (avgQueue.Count > 15)   //15 * 3s = 45s
-            {
-                newAvg = avgQueue.Dequeue();
-                dd = runningAverage * runningNSamples;
-                dd -= newAvg.Item1;
-                runningNSamples -= newAvg.Item2;
-                if (runningNSamples != 0) runningAverage = dd / runningNSamples;
-                else runningAverage = 0;
-
-            }
-        }
-        void ReadHeader()
-        {
-            mStream.BeginRead(rdHdr, 0, 4, new AsyncCallback(DoReadHdr), this);
-        }
-        void ReadData(int sz)
-        {
-            rdBuffer = new byte[sz];
-            mStream.BeginRead(rdBuffer, 0, (int)sz, new AsyncCallback(DoReadBlock), this);
+            
         }
 
-
-
-        void HandleBlock()
+        void HandleBlock(byte[] netBuffer, int netBuffer_len)
         {
             try
             {
                 //Parse contents of rdBuffer
-                if (isEqual(rdBuffer, msg_hello, msg_hello.Length))
+                if (isEqual(netBuffer, msg_hello, msg_hello.Length))
                 {
                     SendRequest();
                 }
-                else if (isEqual(rdBuffer, msg_ready, msg_ready.Length))
+                else if (isEqual(netBuffer, msg_ready, msg_ready.Length))
                 {
                     Startable = true;
                 }
-                else if (isEqual(rdBuffer, msg_data, msg_data.Length))
+                else if (isEqual(netBuffer, msg_data, msg_data.Length))
                 {
                     //Form1.updateLog("Got data... (" + (rdBuffer_len - msg_data.Length).ToString() + ") bytes");
-                    if (saveToFile)
-                    {
-                        if (wav_out != null)
-                        {
-                            wav_out.Write(rdBuffer, msg_data.Length, rdBuffer_len - msg_data.Length);
-                        }
-                    }
-                    AddToStream(rdBuffer, msg_data.Length, rdBuffer_len - msg_data.Length);
+
+                    AddToStream(netBuffer, msg_data.Length, netBuffer_len - msg_data.Length);
                 }
-                else if (isEqual(rdBuffer, msg_rptbaseline, msg_rptbaseline.Length))
+                else if (isEqual(netBuffer, msg_rptbaseline, msg_rptbaseline.Length))
                 {
+                }
+                else
+                {
+                    Form1.updateLog("Unknown packet", ELogLevel.Warning, ELogType.Net);
                 }
 
                 //Form1.updateLog(ASCIIEncoding.ASCII.GetString(rdBuffer));
-                ReadHeader();
             }
             catch (Exception e)
             {
@@ -205,56 +170,30 @@ namespace HollyServer
                     ELogType.Audio | ELogType.Net);
             }
         }
-        DateTime startTime;
-        double _remaining;
+        #endregion
+
+
         public void Start(){
             if (saveToFile)
             {
-                wav_out = new WavFile(32, DateTime.Now.ToString("HHmmssff") + ".wav");
+                wav_out = new WavUtils(16, @"C:\Users\ian\Desktop\audio\server-" + DateTime.Now.ToString("HHmmssff") + ".wav");
             }
             SendStart();
             StartTimer();
         }
-        void StartTimer()
-        {
-            if (cur_stream_no < num_buffers)
-            {
-                if (_remaining == 0)
-                    tick.Interval = (((double)1.0) / buffers_per_s)*1000;
-                else
-                    tick.Interval = _remaining;
-                startTime = DateTime.Now;
-                tick.Start();
-            }
-        }
-        void Stoptimer()
-        {
-            tick.Stop();
-            if (cur_stream_no < num_buffers)
-            {
-                DateTime endTime = DateTime.Now;
-                double diff = endTime.Ticks - startTime.Ticks;
-                diff /= 10000; //milliseconds
-                //diff /= 1000; //seconds
-                if (_remaining != 0)
-                {
-                    _remaining -= diff;
-                    if (_remaining <= 0) _remaining = 0;
-                }
-            }
-        }
         public void Stop(){
             SendStop();
-            if(saveToFile) CloseWav();
+            StopTimer();
+            PurgeBuffers();
+            if (saveToFile)
+            {
+                wav_out.Close();
+                wav_out = null;
+            }
         }
 
-        void SendAudioData(byte[] data, int sz)
-        {
-            byte[] blob = new byte[msg_audioout.Length + sz];
-            Buffer.BlockCopy(msg_audioout, 0, blob, 0, msg_audioout.Length);
-            Buffer.BlockCopy(data, 0, blob, msg_audioout.Length, sz);
-            sendMsg(blob);
-        }
+        #region Network Send
+
         void SendRequest()
         {
             sendMsg(msg_config);
@@ -275,75 +214,39 @@ namespace HollyServer
         }
         void sendMsg(byte[] msg)
         {
-            byte[] hdr = BitConverter.GetBytes(msg.Length);
+            byte[] hdr = BitConverter.GetBytes(System.Net.IPAddress.HostToNetworkOrder(msg.Length));
             byte[] buf = new byte[msg.Length + hdr.Length];
             Buffer.BlockCopy(hdr, 0, buf, 0, hdr.Length);
             Buffer.BlockCopy(msg, 0, buf, hdr.Length, msg.Length);
             mStream.Write(buf, 0, buf.Length);
         }
 
-        public static void DoReadHdr(IAsyncResult ar)
+        #region Send AudioOut
+        void mAudioOut_DataAvailable(object sender, EventArgs e)
         {
-            AudioProtoConnection p = (AudioProtoConnection)ar.AsyncState;
-            try
+            while (mAudioOut.QueueLength > 0)
             {
-                
-                int len = p.mStream.EndRead(ar);
-                if (len != 4)
-                {
-                    p.OnConnClosed();
-                    return;
-                }
-                int sz = BitConverter.ToInt32(p.rdHdr, 0);
-                sz = System.Net.IPAddress.NetworkToHostOrder(sz);
-                //Form1.updateLog("Header says sz = " + sz.ToString());
-                p.ReadData(sz);
-            }
-            catch (Exception e)
-            {
-                Form1.updateLog("ERR: DoReadHdr: exception " + e.ToString(), ELogLevel.Error,
-                    ELogType.Net | ELogType.Audio);
-                p.OnConnClosed();
+                WriteAudioOut();
             }
         }
-        public static void DoReadBlock(IAsyncResult ar)
-        {
-            try {
-                AudioProtoConnection p = (AudioProtoConnection)ar.AsyncState;
-                int len = p.mStream.EndRead(ar);
-                p.rdBuffer_len = len;
-                if (len == 0)
-                {
-                    p.OnConnClosed();
-                    return;
-                }
-                p.HandleBlock();
-            }
-            catch (Exception e)
-            {
-                Form1.updateLog("ERR: DoReadBlock: exception " + e.ToString(), ELogLevel.Error,
-                    ELogType.Net | ELogType.Audio);
-            }
-        }
-
         void WriteAudioOut()
         {
             byte[] chunk = mAudioOut.ReadChunk();
-
-            /*
-            if (len == 0 || len == 1) return; //TODO: Be cleverer
-            if (len % 2 != 0)
-            {
-                //need full frames
-                len -= 1;
-            }
-            mAudioOutOffset += len;
-             * */
             SendAudioData(chunk, chunkSize);
         }
+        void SendAudioData(byte[] data, int sz)
+        {
+            byte[] blob = new byte[msg_audioout.Length + sz];
+            Buffer.BlockCopy(msg_audioout, 0, blob, 0, msg_audioout.Length);
+            Buffer.BlockCopy(data, 0, blob, msg_audioout.Length, sz);
+            sendMsg(blob);
+        }
+        #endregion
 
-        
-        public delegate void AudioConnClosedDelegate(AudioProtoConnection conn);
+        #endregion
+
+        #region Network Errors etc
+        public delegate void AudioConnClosedDelegate(object sender, AudioConnClosedEventArgs e);
         public event AudioConnClosedDelegate AudioConnClosed;
         void OnConnClosed()
         {
@@ -351,60 +254,129 @@ namespace HollyServer
                 ELogType.Audio | ELogType.Net);
             if (saveToFile)
             {
-                CloseWav();
+                wav_out.Close();
+                wav_out = null;
             }
 
             mStream.Close();
+            mClnt.Close();
+
             if (AudioConnClosed != null)
             {
-                AudioConnClosed(this);
-            }
-        }
-        void CloseWav()
-        {
-            if (wav != null)
-            {
-                WavFile a = wav_out;
-                wav = null;
-                a.Close();
+                AudioConnClosed(this, new AudioConnClosedEventArgs(this));
             }
         }
 
+        #endregion
+
+
+        #region Audio Windows
         Object streamsLock;
-        Timer tick;
-
         MemoryStream[] streams;
-        BinaryWriter[] streamWriters;
-        int cur_stream_no;
+        int max_stream_no; //needed while we fill up the set of buffers
         int num_buffers;
         int max_buffer_length; //max length of buffer in bytes
+        int new_stream_when; //number of bytes into current stream at which a new one is created
         void CreateAudioBuffers()
         {
             lock (streamsLock)
             {
                 num_buffers = buffer_length * buffers_per_s;
-                max_buffer_length = 16000 * buffer_length * 2;
+                max_buffer_length = bitrate * buffer_length * 2; //16 bits
+                new_stream_when = (bitrate * 2) / buffers_per_s;
                 streams = new MemoryStream[num_buffers];
-                streamWriters = new BinaryWriter[num_buffers];
-                for (int i = 0; i < num_buffers; i++)
-                {
-                    streams[i] = new MemoryStream();
-                    streamWriters[i] = new BinaryWriter(streams[i]);
-                }
-                cur_stream_no = 0;
+                PurgeBuffers();
             }
         }
-        public delegate void AudioReadyForRecogDelegate(Stream s, string ID);
+        public delegate void AudioReadyForRecogDelegate(object sender, AudioReadyForRecogEventArgs e);
         public event AudioReadyForRecogDelegate AudioReadyForRecog;
         void OnAudioReadyForRecog(Stream s)
         {
             if (AudioReadyForRecog != null)
             {
-                AudioReadyForRecog(s, mEndpoint);
+                string ID = mEndpoint+"@"+DateTime.Now.ToString("mm.ss.fff");
+                Form1.updateLog("AudioReadyForRecog: " + ID, ELogLevel.Debug, ELogType.SpeechRecog);
+                AudioReadyForRecog(this, new AudioReadyForRecogEventArgs(s, ID));
             }
         }
+        void AddToStream(byte[] data, int from, int count)
+        {
+            //convert 32 bit little endian to 16 bit little endian (drop first two packets)
+            byte[] data16 = new byte[count / 2];
+            for (int j16 = 0, j32 = from; j16 < count/2; j16 += 2, j32+=4)
+            {
+                data16[j16] = data[j32 + 2];
+                data16[j16 + 1] = data[j32 + 3];
+            }
+            if (saveToFile)
+            {
+                if (wav_out != null)
+                {
+                    wav_out.Write(data16, 0, data16.Length);
+                }
+            }
+            MemoryStream readyStream = null;
+            lock (streamsLock)
+            {
+                //queue for averaging purposes
+                blockQueue.Enqueue(data16);
+
+                //fill windows
+                for (int i = 0; i < max_stream_no; i++)
+                {
+                    streams[i].Write(data16, 0, data16.Length);
+
+                    if (streams[i].Length >= max_buffer_length)
+                    {
+                        Form1.updateLog("OnAudioReadyForRecog (" + mEndpoint + "): i="+i.ToString()+
+                            " cur_stream_no=" + max_stream_no.ToString() + "  num_buffers=" + num_buffers.ToString(),
+                            ELogLevel.Debug, ELogType.Audio);
+
+                        //CANNOT filter on volume vs noise here as it measures the average volume of the entire
+                        //  stream/slot/window, but speech may (for short commands) only be a small part of the
+                        //  window. Therefore, the correct place to do this is _after_ speech recognition, as
+                        //  that way we only measure the volume of the matched speech.
+                        readyStream = streams[i];
+                        streams[i] = new MemoryStream();
+                    }
+                }
+                if (max_stream_no < num_buffers && streams[max_stream_no - 1].Length >= new_stream_when)
+                    max_stream_no++;
+            }
+            if (readyStream != null) OnAudioReadyForRecog(readyStream);
+
+
+        }
+        public void PurgeBuffers()
+        {
+            //if recog was successful, purge all buffers
+            bool restartTimer = false;
+            if (tick != null && tick.Enabled)
+            {
+                restartTimer = true;
+                StopTimer();
+            }
+            lock (streamsLock)
+            {
+                max_stream_no = 1;
+                for (int i = 0; i < num_buffers; i++)
+                {
+                    streams[i] = new MemoryStream();
+                }
+            }
+            if(restartTimer) StartTimer();
+        }
+
+        #endregion
+
+        #region Background Noise
+        System.Timers.Timer tick;
         public static double AnalyseStream(Stream s)
         {
+            if (!s.CanSeek)
+            {
+                throw new Exception("Analysis can only be performed on seekable streams");
+            }
             s.Seek(0, SeekOrigin.Begin);
             BinaryReader b = new BinaryReader(s);
             double d = 0;
@@ -423,83 +395,75 @@ namespace HollyServer
             catch (Exception e)
             {
                 //expected when stream empty
+                UnreferencedVariable.Ignore(e);
             }
 
             s.Seek(0, SeekOrigin.Begin);
 
             return d / nFrames;
         }
-        
-        void AddToStream(byte[] data, int from, int count)
-        {
-            lock (streamsLock)
-            {
-                blockQueue.Enqueue(new Tuple<byte[], int, int>(data, from, count));
-                for (int i = 0; i < cur_stream_no; i++)
-                {
-                    int nSamples = count / 4;
-                    for (int j = 0; j < nSamples; j++)
-                    {
-                        //16-bit is largest SpeechRecog can handle. Convert from 32 bit.
-                        int d = BitConverter.ToInt32(data, from + j * 4);
-                        d = d >> 16;
-                        short ds = (short)d;
-                        streamWriters[i].Write(ds);
-                    }
-                    if (streams[i].Length >= max_buffer_length)
-                    {
-                        double volume = AnalyseStream(streams[i]);
-
-                        Form1.updateLog("OnAudioReadyForRecog (" + mEndpoint + "): i="+i.ToString()+
-                            " cur_stream_no=" + cur_stream_no.ToString() + "  num_buffers=" + num_buffers.ToString(),
-                            ELogLevel.Debug, ELogType.Audio);
-                        Form1.updateLog("   noise="+NoiseLevel.ToString()+" volume="+volume.ToString(), 
-                            ELogLevel.Debug, ELogType.Audio);
-
-                        //CANNOT filter on volume vs noise here as it measures the average volume of the entire
-                        //  stream/slot/window, but speech may (for short commands) only be a small part of the
-                        //  window. Therefore, the correct place to do this is _after_ speech recognition, as
-                        //  that way we only measure the volume of the matched speech.
-                        /*if (volume < NoiseLevel + 50)
-                        {
-                            Form1.updateLog("      Audio < Noise+50 (a="+volume.ToString()+", n="+NoiseLevel.ToString()+"): Skipping", 
-                                ELogLevel.Info, ELogType.Audio | ELogType.SpeechRecog);
-                        }
-                        else */
-                            OnAudioReadyForRecog(streams[i]);
-                        streams[i] = new MemoryStream();
-                        streamWriters[i] = new BinaryWriter(streams[i]);
-                    }
-                }
-            }
-        }
-        public void RecogSuccessful()
-        {
-            //if recog was successful, purge all buffers
-            tick.Stop();
-            _remaining = 0;
-            //lock (streamsLock)
-            //{
-                cur_stream_no = 0;
-                for (int i = 0; i < num_buffers; i++)
-                {
-                    streams[i] = new MemoryStream();
-                    streamWriters[i] = new BinaryWriter(streams[i]);
-                }
-            //}
-            StartTimer();
-        }
-
-        public Stream GetStreamOut()
-        {
-            //TODO: Sort out a stream for audio out
-            if (mStreamOut == null) mStreamOut = new MemoryStream();
-            return mStreamOut;
-        }
         public double NoiseLevel
         {
             get { return runningAverage; }
         }
+        void StartTimer()
+        {
+            tick.Interval = noise_window_size * 1000;
+            tick.Start();
+        }
+        void StopTimer()
+        {
+            tick.Stop();
+        }
+        void tick_Elapsed(object sender, ElapsedEventArgs e)
+        {
+            UnreferencedVariable.Ignore(e);
+
+            //Form1.updateLog("Tick ("+DateTime.Now.ToString("MMss.ff")+"): cur_stream_no="+cur_stream_no.ToString()+"  num_buffers="+num_buffers.ToString());
+            Queue<byte[]> blk = blockQueue;
+            blockQueue = new Queue<byte[]>();
+
+            //average blockQueue
+            double tot = 0;
+            int nFrames = 0;
+            while (blk.Count > 0)
+            {
+                byte[] b = blk.Dequeue(); //data,from,count
+                int nSamples = b.Length / 2;
+                for (int j = 0; j < nSamples; j++)
+                {
+                    //16-bit is largest SpeechRecog can handle. Convert from 32 bit.
+                    short d = BitConverter.ToInt16(b, j * 2);
+                    tot += d;
+                    nFrames++;
+                }
+            }
+
+
+            double dd = runningAverage;
+            dd = dd * runningNSamples;
+            dd += tot;
+            runningNSamples += nFrames;
+            if (runningNSamples != 0) runningAverage = dd / runningNSamples;
+            else runningAverage = 0;
+
+
+            //Add to avgQueue
+            Tuple<double, int> newAvg = new Tuple<double, int>(tot, nFrames);
+            avgQueue.Enqueue(newAvg);
+
+            while (avgQueue.Count > 15)   //15 * 3s = 45s
+            {
+                newAvg = avgQueue.Dequeue();
+                dd = runningAverage * runningNSamples;
+                dd -= newAvg.Item1;
+                runningNSamples -= newAvg.Item2;
+                if (runningNSamples != 0) runningAverage = dd / runningNSamples;
+                else runningAverage = 0;
+
+            }
+        }
+        #endregion
 
     }
 }

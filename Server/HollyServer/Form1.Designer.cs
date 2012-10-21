@@ -28,11 +28,9 @@
         /// </summary>
         private void InitializeComponent()
         {
-            this.butListen = new System.Windows.Forms.Button();
             this.txtLog = new System.Windows.Forms.RichTextBox();
             this.butStart = new System.Windows.Forms.Button();
             this.butStop = new System.Windows.Forms.Button();
-            this.butCreate = new System.Windows.Forms.Button();
             this.butRecogWav = new System.Windows.Forms.Button();
             this.butLWRF = new System.Windows.Forms.Button();
             this.chkLWRFOn = new System.Windows.Forms.CheckBox();
@@ -60,27 +58,30 @@
             this.chkAlarmBeep = new System.Windows.Forms.CheckBox();
             this.txtAlarmID = new System.Windows.Forms.TextBox();
             this.label5 = new System.Windows.Forms.Label();
-            this.butAudioForwardRec = new System.Windows.Forms.Button();
-            this.butAudioForwardStop = new System.Windows.Forms.Button();
-            this.butXBMC = new System.Windows.Forms.Button();
+            this.prog1 = new System.Windows.Forms.ProgressBar();
+            this.prog2 = new System.Windows.Forms.ProgressBar();
+            this.prog3 = new System.Windows.Forms.ProgressBar();
+            this.lblProg1 = new System.Windows.Forms.Label();
+            this.lblProg2 = new System.Windows.Forms.Label();
+            this.lblProg3 = new System.Windows.Forms.Label();
+            this.txtProg1 = new System.Windows.Forms.TextBox();
+            this.txtProg2 = new System.Windows.Forms.TextBox();
+            this.txtProg3 = new System.Windows.Forms.TextBox();
+            this.progCmd1 = new System.Windows.Forms.ProgressBar();
+            this.progCmd2 = new System.Windows.Forms.ProgressBar();
+            this.progCmd3 = new System.Windows.Forms.ProgressBar();
+            this.txtProgCmd1 = new System.Windows.Forms.TextBox();
+            this.txtProgCmd2 = new System.Windows.Forms.TextBox();
+            this.txtProgCmd3 = new System.Windows.Forms.TextBox();
+            this.ckUseSphinx = new System.Windows.Forms.CheckBox();
             this.groupBox1.SuspendLayout();
             this.SuspendLayout();
-            // 
-            // butListen
-            // 
-            this.butListen.Location = new System.Drawing.Point(13, 13);
-            this.butListen.Name = "butListen";
-            this.butListen.Size = new System.Drawing.Size(75, 23);
-            this.butListen.TabIndex = 0;
-            this.butListen.Text = "Listen";
-            this.butListen.UseVisualStyleBackColor = true;
-            this.butListen.Click += new System.EventHandler(this.butListen_Click);
             // 
             // txtLog
             // 
             this.txtLog.Location = new System.Drawing.Point(2, 295);
             this.txtLog.Name = "txtLog";
-            this.txtLog.Size = new System.Drawing.Size(719, 270);
+            this.txtLog.Size = new System.Drawing.Size(945, 270);
             this.txtLog.TabIndex = 1;
             this.txtLog.Text = "";
             // 
@@ -104,19 +105,9 @@
             this.butStop.UseVisualStyleBackColor = true;
             this.butStop.Click += new System.EventHandler(this.butStop_Click);
             // 
-            // butCreate
-            // 
-            this.butCreate.Location = new System.Drawing.Point(192, 13);
-            this.butCreate.Name = "butCreate";
-            this.butCreate.Size = new System.Drawing.Size(75, 23);
-            this.butCreate.TabIndex = 4;
-            this.butCreate.Text = "CreateBin";
-            this.butCreate.UseVisualStyleBackColor = true;
-            this.butCreate.Click += new System.EventHandler(this.butCreate_Click);
-            // 
             // butRecogWav
             // 
-            this.butRecogWav.Location = new System.Drawing.Point(285, 11);
+            this.butRecogWav.Location = new System.Drawing.Point(243, 11);
             this.butRecogWav.Name = "butRecogWav";
             this.butRecogWav.Size = new System.Drawing.Size(75, 23);
             this.butRecogWav.TabIndex = 5;
@@ -199,8 +190,6 @@
             // chkStartOnConnect
             // 
             this.chkStartOnConnect.AutoSize = true;
-            this.chkStartOnConnect.Checked = true;
-            this.chkStartOnConnect.CheckState = System.Windows.Forms.CheckState.Checked;
             this.chkStartOnConnect.Location = new System.Drawing.Point(95, 71);
             this.chkStartOnConnect.Name = "chkStartOnConnect";
             this.chkStartOnConnect.Size = new System.Drawing.Size(105, 17);
@@ -377,44 +366,149 @@
             this.label5.TabIndex = 27;
             this.label5.Text = "Unique ID:";
             // 
-            // butAudioForwardRec
+            // prog1
             // 
-            this.butAudioForwardRec.Location = new System.Drawing.Point(627, 113);
-            this.butAudioForwardRec.Name = "butAudioForwardRec";
-            this.butAudioForwardRec.Size = new System.Drawing.Size(75, 23);
-            this.butAudioForwardRec.TabIndex = 28;
-            this.butAudioForwardRec.Text = "Record";
-            this.butAudioForwardRec.UseVisualStyleBackColor = true;
-            this.butAudioForwardRec.Click += new System.EventHandler(this.butAudioForwardRec_Click);
+            this.prog1.Location = new System.Drawing.Point(632, 11);
+            this.prog1.Name = "prog1";
+            this.prog1.Size = new System.Drawing.Size(100, 23);
+            this.prog1.TabIndex = 28;
             // 
-            // butAudioForwardStop
+            // prog2
             // 
-            this.butAudioForwardStop.Location = new System.Drawing.Point(627, 142);
-            this.butAudioForwardStop.Name = "butAudioForwardStop";
-            this.butAudioForwardStop.Size = new System.Drawing.Size(75, 23);
-            this.butAudioForwardStop.TabIndex = 29;
-            this.butAudioForwardStop.Text = "Stop";
-            this.butAudioForwardStop.UseVisualStyleBackColor = true;
-            this.butAudioForwardStop.Click += new System.EventHandler(this.butAudioForwardStop_Click);
+            this.prog2.Location = new System.Drawing.Point(632, 41);
+            this.prog2.Name = "prog2";
+            this.prog2.Size = new System.Drawing.Size(100, 23);
+            this.prog2.TabIndex = 29;
             // 
-            // butXBMC
+            // prog3
             // 
-            this.butXBMC.Location = new System.Drawing.Point(399, 12);
-            this.butXBMC.Name = "butXBMC";
-            this.butXBMC.Size = new System.Drawing.Size(75, 23);
-            this.butXBMC.TabIndex = 30;
-            this.butXBMC.Text = "XBMC";
-            this.butXBMC.UseVisualStyleBackColor = true;
-            this.butXBMC.Click += new System.EventHandler(this.button1_Click);
+            this.prog3.Location = new System.Drawing.Point(632, 71);
+            this.prog3.Name = "prog3";
+            this.prog3.Size = new System.Drawing.Size(100, 23);
+            this.prog3.TabIndex = 30;
+            // 
+            // lblProg1
+            // 
+            this.lblProg1.AutoSize = true;
+            this.lblProg1.Location = new System.Drawing.Point(524, 14);
+            this.lblProg1.Name = "lblProg1";
+            this.lblProg1.Size = new System.Drawing.Size(35, 13);
+            this.lblProg1.TabIndex = 31;
+            this.lblProg1.Text = "label7";
+            // 
+            // lblProg2
+            // 
+            this.lblProg2.AutoSize = true;
+            this.lblProg2.Location = new System.Drawing.Point(524, 45);
+            this.lblProg2.Name = "lblProg2";
+            this.lblProg2.Size = new System.Drawing.Size(35, 13);
+            this.lblProg2.TabIndex = 32;
+            this.lblProg2.Text = "label8";
+            // 
+            // lblProg3
+            // 
+            this.lblProg3.AutoSize = true;
+            this.lblProg3.Location = new System.Drawing.Point(524, 79);
+            this.lblProg3.Name = "lblProg3";
+            this.lblProg3.Size = new System.Drawing.Size(35, 13);
+            this.lblProg3.TabIndex = 33;
+            this.lblProg3.Text = "label9";
+            // 
+            // txtProg1
+            // 
+            this.txtProg1.Location = new System.Drawing.Point(738, 11);
+            this.txtProg1.Name = "txtProg1";
+            this.txtProg1.Size = new System.Drawing.Size(37, 20);
+            this.txtProg1.TabIndex = 34;
+            // 
+            // txtProg2
+            // 
+            this.txtProg2.Location = new System.Drawing.Point(738, 42);
+            this.txtProg2.Name = "txtProg2";
+            this.txtProg2.Size = new System.Drawing.Size(37, 20);
+            this.txtProg2.TabIndex = 35;
+            // 
+            // txtProg3
+            // 
+            this.txtProg3.Location = new System.Drawing.Point(738, 76);
+            this.txtProg3.Name = "txtProg3";
+            this.txtProg3.Size = new System.Drawing.Size(37, 20);
+            this.txtProg3.TabIndex = 36;
+            // 
+            // progCmd1
+            // 
+            this.progCmd1.Location = new System.Drawing.Point(781, 12);
+            this.progCmd1.Name = "progCmd1";
+            this.progCmd1.Size = new System.Drawing.Size(100, 23);
+            this.progCmd1.TabIndex = 37;
+            // 
+            // progCmd2
+            // 
+            this.progCmd2.Location = new System.Drawing.Point(782, 41);
+            this.progCmd2.Name = "progCmd2";
+            this.progCmd2.Size = new System.Drawing.Size(100, 23);
+            this.progCmd2.TabIndex = 38;
+            // 
+            // progCmd3
+            // 
+            this.progCmd3.Location = new System.Drawing.Point(782, 70);
+            this.progCmd3.Name = "progCmd3";
+            this.progCmd3.Size = new System.Drawing.Size(100, 23);
+            this.progCmd3.TabIndex = 39;
+            // 
+            // txtProgCmd1
+            // 
+            this.txtProgCmd1.Location = new System.Drawing.Point(888, 13);
+            this.txtProgCmd1.Name = "txtProgCmd1";
+            this.txtProgCmd1.Size = new System.Drawing.Size(37, 20);
+            this.txtProgCmd1.TabIndex = 40;
+            // 
+            // txtProgCmd2
+            // 
+            this.txtProgCmd2.Location = new System.Drawing.Point(888, 44);
+            this.txtProgCmd2.Name = "txtProgCmd2";
+            this.txtProgCmd2.Size = new System.Drawing.Size(37, 20);
+            this.txtProgCmd2.TabIndex = 41;
+            // 
+            // txtProgCmd3
+            // 
+            this.txtProgCmd3.Location = new System.Drawing.Point(888, 71);
+            this.txtProgCmd3.Name = "txtProgCmd3";
+            this.txtProgCmd3.Size = new System.Drawing.Size(37, 20);
+            this.txtProgCmd3.TabIndex = 42;
+            // 
+            // ckUseSphinx
+            // 
+            this.ckUseSphinx.AutoSize = true;
+            this.ckUseSphinx.Location = new System.Drawing.Point(324, 19);
+            this.ckUseSphinx.Name = "ckUseSphinx";
+            this.ckUseSphinx.Size = new System.Drawing.Size(104, 17);
+            this.ckUseSphinx.TabIndex = 43;
+            this.ckUseSphinx.Text = "Use CMUSphinx";
+            this.ckUseSphinx.UseVisualStyleBackColor = true;
+            this.ckUseSphinx.CheckedChanged += new System.EventHandler(this.ckUseSphinx_CheckedChanged);
             // 
             // Form1
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(733, 567);
-            this.Controls.Add(this.butXBMC);
-            this.Controls.Add(this.butAudioForwardStop);
-            this.Controls.Add(this.butAudioForwardRec);
+            this.ClientSize = new System.Drawing.Size(959, 567);
+            this.Controls.Add(this.ckUseSphinx);
+            this.Controls.Add(this.txtProgCmd3);
+            this.Controls.Add(this.txtProgCmd2);
+            this.Controls.Add(this.txtProgCmd1);
+            this.Controls.Add(this.progCmd3);
+            this.Controls.Add(this.progCmd2);
+            this.Controls.Add(this.progCmd1);
+            this.Controls.Add(this.txtProg3);
+            this.Controls.Add(this.txtProg2);
+            this.Controls.Add(this.txtProg1);
+            this.Controls.Add(this.lblProg3);
+            this.Controls.Add(this.lblProg2);
+            this.Controls.Add(this.lblProg1);
+            this.Controls.Add(this.prog3);
+            this.Controls.Add(this.prog2);
+            this.Controls.Add(this.prog1);
             this.Controls.Add(this.groupBox1);
             this.Controls.Add(this.butPlayWav);
             this.Controls.Add(this.txtRemoteID);
@@ -429,11 +523,9 @@
             this.Controls.Add(this.chkLWRFOn);
             this.Controls.Add(this.butLWRF);
             this.Controls.Add(this.butRecogWav);
-            this.Controls.Add(this.butCreate);
             this.Controls.Add(this.butStop);
             this.Controls.Add(this.butStart);
             this.Controls.Add(this.txtLog);
-            this.Controls.Add(this.butListen);
             this.Name = "Form1";
             this.Text = "Form1";
             this.groupBox1.ResumeLayout(false);
@@ -445,11 +537,9 @@
 
         #endregion
 
-        private System.Windows.Forms.Button butListen;
         private System.Windows.Forms.RichTextBox txtLog;
         private System.Windows.Forms.Button butStart;
         private System.Windows.Forms.Button butStop;
-        private System.Windows.Forms.Button butCreate;
         private System.Windows.Forms.Button butRecogWav;
         private System.Windows.Forms.Button butLWRF;
         private System.Windows.Forms.CheckBox chkLWRFOn;
@@ -471,15 +561,28 @@
         private System.Windows.Forms.RadioButton radioAlarmTime;
         private System.Windows.Forms.RadioButton radioAlarmS;
         private System.Windows.Forms.GroupBox groupBox1;
-        private System.Windows.Forms.Button butAudioForwardRec;
-        private System.Windows.Forms.Button butAudioForwardStop;
         private System.Windows.Forms.TextBox txtAlarmID;
         private System.Windows.Forms.Label label5;
         private System.Windows.Forms.CheckBox chkAlarmSayTime;
         private System.Windows.Forms.CheckBox chkAlarmBeep;
         private System.Windows.Forms.Label label6;
         private System.Windows.Forms.TextBox txtAlarmSpeak;
-        private System.Windows.Forms.Button butXBMC;
+        private System.Windows.Forms.ProgressBar prog1;
+        private System.Windows.Forms.ProgressBar prog2;
+        private System.Windows.Forms.ProgressBar prog3;
+        private System.Windows.Forms.Label lblProg1;
+        private System.Windows.Forms.Label lblProg2;
+        private System.Windows.Forms.Label lblProg3;
+        private System.Windows.Forms.TextBox txtProg1;
+        private System.Windows.Forms.TextBox txtProg2;
+        private System.Windows.Forms.TextBox txtProg3;
+        private System.Windows.Forms.ProgressBar progCmd1;
+        private System.Windows.Forms.ProgressBar progCmd2;
+        private System.Windows.Forms.ProgressBar progCmd3;
+        private System.Windows.Forms.TextBox txtProgCmd1;
+        private System.Windows.Forms.TextBox txtProgCmd2;
+        private System.Windows.Forms.TextBox txtProgCmd3;
+        private System.Windows.Forms.CheckBox ckUseSphinx;
     }
 }
 

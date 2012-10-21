@@ -7,7 +7,7 @@ using System.Speech.Recognition;
 
 namespace HollyServer
 {
-    public delegate void IControllableEventDelegate(IControllable from, IControllableEventArgs e);
+    public delegate void IControllableEventDelegate(object sender, IControllableEventArgs e);
     public class IControllableEventArgs : EventArgs
     {
         public IControllableEventArgs(string name, string action)
@@ -22,8 +22,11 @@ namespace HollyServer
     public interface IControllable
     {
         string GetName();
-        SrgsDocument CreateGrammarDoc();
-        bool OnSpeechRecognised(string ID, RecognitionResult result);
+        SrgsDocument CreateGrammarDoc_SRGS();
+        CMUSphinx_GrammarDict CreateGrammarDoc_JSGF();
+        CMUSphinx_GrammarDict CreateGrammarDoc_FSG();
+
+        bool OnSpeechRecognised(string ID, RecognitionSuccess result);
 
         event IControllableEventDelegate ControllableEvent;
     }

@@ -30,7 +30,7 @@ namespace HollyServer
     }
 
 
-    public class XBMC : IControllable
+    public class XBMC : IControllable, IDisposable
     {
         string mIPAddress;
         string mPort;
@@ -43,7 +43,7 @@ namespace HollyServer
         List<XBMCProto.Genre> mGenres;
 
 
-        SrgsItem CreateNumber(string prepend, SrgsDocument doc)
+        SrgsItem CreateNumberSRGS(string prepend, SrgsDocument doc)
         {
             SrgsItem digit_0 = new SrgsItem("zero");
             digit_0.Add(new SrgsNameValueTag(prepend+"0", 0));
@@ -115,12 +115,107 @@ namespace HollyServer
             ret.Add(new SrgsNameValueTag(prepend, "true"));
             return ret;
         }
+        bool CreateNumberJSGF(string rulename, CMUSphinx_GrammarDict cgd)
+        {
+            
+            List<string> digit_single = new List<string>();
+            digit_single.Add("one");
+            digit_single.Add("two");
+            digit_single.Add("three");
+            digit_single.Add("four");
+            digit_single.Add("five");
+            digit_single.Add("six");
+            digit_single.Add("seven");
+            digit_single.Add("eight");
+            digit_single.Add("nine");
+
+            List<string> digit_tens = new List<string>();
+            digit_tens.Add("twenty");
+            digit_tens.Add("thirty");
+            digit_tens.Add("fourty");
+            digit_tens.Add("fifty");
+            digit_tens.Add("sixty");
+
+            List<string> digit_special = new List<string>();
+            digit_special.Add("zero");
+            digit_special.Add("ten");
+            digit_special.Add("eleven");
+            digit_special.Add("twelve");
+            digit_special.Add("thirteen");
+            digit_special.Add("fourteen");
+            digit_special.Add("fifteen");
+            digit_special.Add("sixteen");
+            digit_special.Add("seventeen");
+            digit_special.Add("eighteen");
+            digit_special.Add("nineteen");
+
+            StringBuilder bld_twodigit = new StringBuilder();
+            cgd.JSGFRuleStart("<"+rulename+"_twodigit>", bld_twodigit);
+            cgd.JSGFRuleAddChoicesStart(bld_twodigit, digit_tens);
+            cgd.JSGFRuleAddChoicesEnd(bld_twodigit);
+            cgd.JSGFRuleAddChoicesStart(bld_twodigit, digit_single);
+            cgd.JSGFRuleAddChoicesEnd(bld_twodigit);
+            cgd.JSGFRuleEnd("<"+rulename + "_twodigit>", bld_twodigit);
+
+            StringBuilder bld_onedigit = new StringBuilder();
+            cgd.JSGFRuleStart("<"+rulename + "_onedigit>", bld_onedigit);
+            cgd.JSGFRuleAddChoicesStart(bld_onedigit, digit_single);
+            cgd.JSGFRuleAddChoicesMore(bld_onedigit, digit_tens);
+            cgd.JSGFRuleAddChoicesMore(bld_onedigit, digit_special);
+            cgd.JSGFRuleAddChoicesEnd(bld_onedigit);
+            cgd.JSGFRuleEnd("<"+rulename + "_onedigit>", bld_onedigit);
+
+            StringBuilder bld = new StringBuilder();
+            cgd.JSGFRuleStart("<"+rulename+">", bld);
+            cgd.JSGFRuleAddChoicesStart(bld, new List<string>(new string[] { "<"+rulename + "_onedigit>", "<"+rulename + "_twodigit>" }));
+            cgd.JSGFRuleAddChoicesEnd(bld);
+            cgd.JSGFRuleEnd("<"+rulename+">", bld);
+
+            return true;
+        }
+        CMUSphinx_FSGState CreateNumberFSG(CMUSphinx_FSGState startState, CMUSphinx_GrammarDict cgd)
+        {
+            CMUSphinx_FSGState start_special = cgd.FSGCreateOrphanState();
+            CMUSphinx_FSGState start_digits = cgd.FSGCreateOrphanState();
+            CMUSphinx_FSGState start_tens = cgd.FSGCreateOrphanState();
+            CMUSphinx_FSGState end = cgd.FSGCreateOrphanState();
+            CMUSphinx_FSGState end_tens = cgd.FSGCreateOrphanState();
+
+            //fillers
+            cgd.FSGLinkStates(startState, start_digits, "");
+            cgd.FSGLinkStates(startState, start_special, "");
+            cgd.FSGLinkStates(startState, start_tens, "");
+
+            //digits
+            cgd.FSGLinkStates(start_digits, end, "one");
+            cgd.FSGLinkStates(start_digits, end, "two");
+            cgd.FSGLinkStates(start_digits, end, "seven");
+            //TODO
+
+            
+            //specials
+            cgd.FSGLinkStates(start_special, end, "ten");
+            cgd.FSGLinkStates(start_special, end, "eleven");
+            cgd.FSGLinkStates(start_special, end, "twelve");
+            //TODO: Finish these
+            
+            //tens
+            cgd.FSGLinkStates(start_tens, end_tens, "twenty");
+            cgd.FSGLinkStates(start_tens, end_tens, "thirty");
+            //TODO: Finish the tens
+            cgd.FSGLinkStates(end_tens, start_digits, "");
+            cgd.FSGLinkStates(end_tens, end, "");
+
+
+            return end;
+        }
+
         public string GetName()
         {
             return "XBMC";
         }
         static SrgsDocument currentSrgsDoc = null;
-        public System.Speech.Recognition.SrgsGrammar.SrgsDocument CreateGrammarDoc()
+        public System.Speech.Recognition.SrgsGrammar.SrgsDocument CreateGrammarDoc_SRGS()
         {
             if (currentSrgsDoc != null) return currentSrgsDoc;
 
@@ -139,7 +234,10 @@ namespace HollyServer
             if (mTVShows == null) return null;
             foreach (XBMCProto.TVShow s in mTVShows)
             {
-                SrgsItem showitem = new SrgsItem(CleanString(s.label));
+                string temps = CleanString(s.label);
+                temps = temps.Trim();
+                if (temps == "" || s.tvshowid < 1) continue;
+                SrgsItem showitem = new SrgsItem(temps);
                 showitem.Add(new SrgsNameValueTag("tvshowid", s.tvshowid));
                 shows.Add(showitem);
             }
@@ -155,9 +253,9 @@ namespace HollyServer
             rule_playshow_episode.Add(cmd_tv);
             rule_playshow_episode.Add(shows);
             rule_playshow_episode.Add(new SrgsItem("season"));
-            rule_playshow_episode.Add(CreateNumber("seasonval", doc));  //episode number
+            rule_playshow_episode.Add(CreateNumberSRGS("seasonval", doc));  //episode number
             rule_playshow_episode.Add(new SrgsItem("episode"));
-            rule_playshow_episode.Add(CreateNumber("episodeval", doc));   //episode number
+            rule_playshow_episode.Add(CreateNumberSRGS("episodeval", doc));   //episode number
             doc.Rules.Add(rule_playshow_episode);
             ops.Add(new SrgsItem(new SrgsRuleRef(rule_playshow_episode)));
 
@@ -173,8 +271,10 @@ namespace HollyServer
             if (mMovies == null) return null;
             foreach (XBMCProto.Movie m in mMovies)
             {
-                if (m.label == "" || m.movieid < 1) continue;
-                SrgsItem filmItem = new SrgsItem(CleanString(m.label));
+                string temps = CleanString(m.label);
+                temps = temps.Trim();
+                if (temps == "" || m.movieid < 1) continue;
+                SrgsItem filmItem = new SrgsItem(temps);
                 filmItem.Add(new SrgsNameValueTag("movieid", m.movieid));
                 films.Add(filmItem);
             }
@@ -202,8 +302,10 @@ namespace HollyServer
             if (mGenres == null) return null;
             foreach (XBMCProto.Genre m in mGenres)
             {
-                if (m.label == "" || m.genreid < 1) continue;
-                SrgsItem agItem = new SrgsItem(CleanString(m.label)+" music");
+                string temps = CleanString(m.label);
+                temps = temps.Trim();
+                if (temps == "" || m.genreid < 1) continue;
+                SrgsItem agItem = new SrgsItem(temps+" music");
                 agItem.Add(new SrgsNameValueTag("genreid", m.genreid));
                 audioGenres.Add(agItem);
             }
@@ -246,26 +348,261 @@ namespace HollyServer
             currentSrgsDoc = doc;
             return currentSrgsDoc;
         }
-        public bool OnSpeechRecognised(string ID, System.Speech.Recognition.RecognitionResult result)
+        static CMUSphinx_GrammarDict currentJSGFDoc = null;
+        public CMUSphinx_GrammarDict CreateGrammarDoc_JSGF()
+        {
+            if (currentJSGFDoc != null) return currentJSGFDoc;
+            CMUSphinx_GrammarDict ret = new CMUSphinx_GrammarDict();
+            ret.GrammarName = GetName();
+            StringBuilder bld = new StringBuilder();
+
+            List<string> ops = new List<string>();
+
+
+            //numbers
+            CreateNumberJSGF("NUMS", ret);
+
+            //TV Shows
+            if (mTVShows == null)
+            {
+                mTVShows = ListTVShows();
+            }
+            if (mTVShows == null) return null;
+            List<string> tvShowNames = new List<string>();
+            foreach (XBMCProto.TVShow s in mTVShows)
+            {
+                string temps = CleanString(s.label);
+                temps = temps.Trim();
+                if (temps == "" || s.tvshowid < 1) continue;
+                tvShowNames.Add(temps);
+            }
+
+            string tvshow_name = "<TVSHOW>";
+            StringBuilder tvshow_bld = new StringBuilder();
+            ret.JSGFRuleStart(tvshow_name, tvshow_bld);
+            ret.JSGFRuleAddChoicesStart(tvshow_bld, new List<string>(new string[]{ "play show", "resume show"}));
+            ret.JSGFRuleAddChoicesEnd(tvshow_bld);
+            ret.JSGFRuleAddChoicesStart(tvshow_bld, tvShowNames);
+            ret.JSGFRuleAddChoicesEnd(tvshow_bld);
+            ret.JSGFRuleAddToken(tvshow_bld, "SEASON");
+            ret.JSGFRuleAddToken(tvshow_bld, "<NUMS>");
+            ret.JSGFRuleAddToken(tvshow_bld, "EPISODE");
+            ret.JSGFRuleAddToken(tvshow_bld, "<NUMS>");
+            ret.JSGFRuleEnd(tvshow_name, tvshow_bld);
+
+            ops.Add(tvshow_name);
+            
+
+            //Movies
+            if (mMovies == null)
+            {
+                mMovies = ListMovies();
+            }
+            if (mMovies == null) return null;
+            List<string> movieNames = new List<string>();
+            foreach (XBMCProto.Movie m in mMovies)
+            {
+                string temps = CleanString(m.label);
+                temps = temps.Trim();
+                if (temps == "" || m.movieid < 1) continue;
+                movieNames.Add(temps);
+            }
+
+            string movie_name = "<MOVIE>";
+            StringBuilder movie_bld = new StringBuilder();
+            ret.JSGFRuleStart(movie_name, movie_bld);
+            ret.JSGFRuleAddChoicesStart(movie_bld, new List<string>(new string[] { "play movie", "resume movie" }));
+            ret.JSGFRuleAddChoicesEnd(movie_bld);
+            ret.JSGFRuleAddChoicesStart(movie_bld, movieNames);
+            ret.JSGFRuleAddChoicesEnd(movie_bld);
+            ret.JSGFRuleEnd(movie_name, movie_bld);
+
+            ops.Add(movie_name);
+            
+
+
+            //Music Genres
+            SrgsOneOf audioGenres = new SrgsOneOf();
+            if (mGenres == null)
+            {
+                mGenres = ListAudioGenres();
+            }
+            if (mGenres == null) return null;
+            List<string> genreNames = new List<string>();
+            foreach (XBMCProto.Genre m in mGenres)
+            {
+                string temps = CleanString(m.label);
+                temps = temps.Trim();
+                if (temps == "" || m.genreid < 1) continue;
+                genreNames.Add(temps + " music");
+            }
+
+            string audiogenre_name = "<AUDIOGENRE>";
+            StringBuilder audiogenre_bld = new StringBuilder();
+            ret.JSGFRuleStart(audiogenre_name, audiogenre_bld);
+            ret.JSGFRuleAddToken(audiogenre_bld, "play me some");
+            ret.JSGFRuleAddChoicesStart(audiogenre_bld, genreNames);
+            ret.JSGFRuleAddChoicesEnd(audiogenre_bld);
+            ret.JSGFRuleEnd(audiogenre_name, audiogenre_bld);
+
+            ops.Add(audiogenre_name);
+
+
+            //Other
+            ops.Add("stop media");
+            ops.Add("pause media");
+            ops.Add("resume media");
+            
+
+            StringBuilder bld_ops= new StringBuilder();
+            ret.JSGFRuleStart("<OPS>", bld_ops);
+            ret.JSGFRuleAddChoicesStart(bld_ops, ops);
+            ret.JSGFRuleAddChoicesEnd(bld_ops);
+            ret.JSGFRuleEnd("<OPS>", bld_ops);
+
+            ret.JSGFRuleStart("<ROOT>", bld);
+            ret.JSGFRuleAddToken(bld, "Holly");
+            ret.JSGFRuleAddToken(bld, "<OPS>");
+            ret.JSGFRuleAddToken(bld, "please");
+            ret.JSGFRuleEnd("<ROOT>", bld);
+
+            ret.JSGFSetRootRule("<ROOT>");
+
+            ret.BuildJSGFGrammarAndDict();
+            currentJSGFDoc = ret;
+            return ret;
+        }
+        public CMUSphinx_GrammarDict CreateGrammarDoc_FSG()
+        {
+            if (currentJSGFDoc != null) return currentJSGFDoc;
+            CMUSphinx_GrammarDict ret = new CMUSphinx_GrammarDict();
+            ret.GrammarName = GetName();
+
+            CMUSphinx_FSGState root = ret.FSGCreate(ret.GrammarName);
+            CMUSphinx_FSGState end = ret.FSGGetEndState();
+
+            //numbers
+            CMUSphinx_FSGState epNumsStart = ret.FSGCreateOrphanState();
+            CMUSphinx_FSGState epNumsEnd = CreateNumberFSG(epNumsStart, ret);
+            CMUSphinx_FSGState seasonNumsStart = ret.FSGCreateOrphanState();
+            CMUSphinx_FSGState seasonNumsEnd = CreateNumberFSG(seasonNumsStart, ret);
+
+            //TV Shows
+            if (mTVShows == null)
+            {
+                mTVShows = ListTVShows();
+            }
+            if (mTVShows == null) return null;
+            List<string> tvShowNames = new List<string>();
+            foreach (XBMCProto.TVShow s in mTVShows)
+            {
+                string temps = CleanString(s.label);
+                temps = temps.Trim();
+                if (temps == "" || s.tvshowid < 1) continue;
+                tvShowNames.Add(temps);
+            }
+
+            CMUSphinx_FSGState play = ret.FSGTransitionToNewState(root, "Holly play show");
+            CMUSphinx_FSGState temp1 = ret.FSGTransitionToNewState(root, "Holly resume show");
+            ret.FSGGroupStates(play, temp1);
+            temp1 = ret.FSGCreateOrphanState();
+            CMUSphinx_FSGState temp2;
+            foreach (string s in tvShowNames)
+            {
+                temp2 = ret.FSGTransitionToNewState(play, s);
+                ret.FSGGroupStates(temp1, temp2);
+            }
+            temp1 = ret.FSGTransitionToNewState(temp1, "season");
+            temp1 = CreateNumberFSG(temp1, ret);
+            temp1 = ret.FSGTransitionToNewState(temp1, "episode");
+            temp1 = CreateNumberFSG(temp1, ret);
+            temp1 = ret.FSGTransitionToNewState(temp1, "please");
+            ret.FSGGroupStates(end, temp1);
+
+
+            //Movies
+            if (mMovies == null)
+            {
+                mMovies = ListMovies();
+            }
+            if (mMovies == null) return null;
+            List<string> movieNames = new List<string>();
+            foreach (XBMCProto.Movie m in mMovies)
+            {
+                string temps = CleanString(m.label);
+                temps = temps.Trim();
+                if (temps == "" || m.movieid < 1) continue;
+                movieNames.Add(temps);
+            }
+
+            play = ret.FSGTransitionToNewState(root, "Holly play movie");
+            temp1 = ret.FSGTransitionToNewState(root, "Holly resume movie");
+            ret.FSGGroupStates(play, temp1);
+            temp1 = ret.FSGCreateOrphanState();
+            foreach (string s in movieNames)
+            {
+                temp2 = ret.FSGTransitionToNewState(play, s);
+                ret.FSGGroupStates(temp1, temp2);
+            }
+            temp1 = ret.FSGTransitionToNewState(temp1, "please");
+            ret.FSGGroupStates(end, temp1);
+            
+
+            //Music Genres
+            SrgsOneOf audioGenres = new SrgsOneOf();
+            if (mGenres == null)
+            {
+                mGenres = ListAudioGenres();
+            }
+            if (mGenres == null) return null;
+            List<string> genreNames = new List<string>();
+            foreach (XBMCProto.Genre m in mGenres)
+            {
+                string temps = CleanString(m.label);
+                temps = temps.Trim();
+                if (temps == "" || m.genreid < 1) continue;
+                genreNames.Add(temps);
+            }
+
+            play = ret.FSGTransitionToNewState(root, "Holly play me some");
+            temp1 = ret.FSGCreateOrphanState();
+            foreach (string s in movieNames)
+            {
+                temp2 = ret.FSGTransitionToNewState(play, s);
+                ret.FSGGroupStates(temp1, temp2);
+            }
+            temp1 = ret.FSGTransitionToNewState(temp1, "music please");
+            ret.FSGGroupStates(end, temp1);
+
+           
+
+
+            //Other
+            play = ret.FSGTransitionToNewState(root, "Holly stop media please");
+            ret.FSGGroupStates(end, play);
+            play = ret.FSGTransitionToNewState(root, "Holly pause media please");
+            ret.FSGGroupStates(end, play);
+            play = ret.FSGTransitionToNewState(root, "Holly resume media please");
+            ret.FSGGroupStates(end, play);
+
+            ret.BuildFSGGrammarAndDict();
+            currentJSGFDoc = ret;
+            return ret;
+        }
+        
+        public bool OnSpeechRecognised(string ID, RecognitionSuccess result)
         {
             //ID: source of the audio. Normally IPaddress:port
             string cmd = "";
-            if (result.Semantics.ContainsKey("command")) cmd = result.Semantics["command"].Value.ToString();
+            if (result.getSemanticValuesAsString("command") != null) cmd = result.getSemanticValuesAsString("command");
 
             if (cmd == "play show" || cmd == "resume show")
             {
-                int tvshowid = 0;
-                int episode = 0;
-                int season = 0;
-                foreach(KeyValuePair<String, SemanticValue> hit in result.Semantics){
-                    if (hit.Key == "tvshowid") tvshowid = (int)hit.Value.Value;
-                    else if (hit.Key.StartsWith("episodeval") && hit.Key != "episodeval") 
-                        episode += (int)hit.Value.Value;
-                    else if (hit.Key.StartsWith("seasonval") && hit.Key != "seasonval") 
-                        season += (int)hit.Value.Value;
-                }
+                int tvshowid = result.getSemanticValueAsInt("tvshowid");
+                int episode = result.getSemanticValueAsInt("episodeval");
+                int season = result.getSemanticValueAsInt("seasonval");
 
-                if (tvshowid != 0 && episode != 0 && season != 0)
+                if (tvshowid != -1 && episode != -1 && season != -1)
                 {
                     OnControllableEvent(this, new XBMCEventArgs(ID, cmd, tvshowid, season, episode));
                     return true;
@@ -273,16 +610,8 @@ namespace HollyServer
             }
             else if (cmd == "play movie" || cmd == "resume movie")
             {
-                int movieid = 0;
-                foreach (KeyValuePair<String, SemanticValue> hit in result.Semantics)
-                {
-                    if (hit.Key == "movieid")
-                    {
-                        movieid = (int)hit.Value.Value;
-                        break;
-                    }
-                }
-                if (movieid > 0)
+                int movieid = result.getSemanticValueAsInt("movieid");
+                if (movieid != -1)
                 {
                     OnControllableEvent(this, new XBMCEventArgs(ID, cmd, movieid, 0, 0));
                     return true;
@@ -295,16 +624,8 @@ namespace HollyServer
             }
             else if (cmd == "play me some")
             { //genre music
-                int genreid = 0;
-                foreach (KeyValuePair<String, SemanticValue> hit in result.Semantics)
-                {
-                    if (hit.Key == "genreid")
-                    {
-                        genreid = (int)hit.Value.Value;
-                        break;
-                    }
-                }
-                if (genreid > 0)
+                int genreid = result.getSemanticValueAsInt("genreid");
+                if (genreid != -1)
                 {
                     OnControllableEvent(this, new XBMCEventArgs(ID, cmd, genreid, 0, 0));
                     return true;
@@ -325,6 +646,7 @@ namespace HollyServer
 
         public XBMC(string IPAddress, string Port, string user, string password)
         {
+            //TODO: Proper exception handling of all the JSON commands and networking
             mIPAddress = IPAddress;
             mPassword = password;
             mPort = Port;
@@ -334,6 +656,20 @@ namespace HollyServer
             mClnt.Credentials = new NetworkCredential(mUser, mPassword);
             mClnt.BaseAddress = "http://" + mIPAddress + ":" + mPort + "/jsonrpc";
         }
+        public bool VerifyConnection()
+        {
+            try
+            {
+                ListAudioGenres();
+            }
+            catch (Exception e)
+            {
+                Form1.updateLog("XBMC: Connection failed: " + e.Message, ELogLevel.Warning, ELogType.XBMC);
+                return false;
+            }
+            return true;
+        }
+
 
         public List<XBMCProto.TVShow> ListTVShows()
         {
@@ -391,9 +727,62 @@ namespace HollyServer
 
         string CleanString(string s)
         {
+            //TODO: This should have a GUI
             string tmp = s;
-            tmp = tmp.Replace("$#*!", "Shit");
-            tmp = tmp.Replace(":", "");
+            tmp = tmp.Replace("(2001)", "");
+            tmp = tmp.Replace("(2003)", "");
+            tmp = tmp.Replace("(2005)", "");
+            tmp = tmp.Replace("(2006)", "");
+            tmp = tmp.Replace("(2008)", "");
+            tmp = tmp.Replace("(2009)", "");
+            tmp = tmp.Replace("(2010)", "");
+            tmp = tmp.Replace("(2012)", "");
+
+            tmp = tmp.Replace("2001", " TWO THOUSAND AND ONE ");
+            tmp = tmp.Replace("2010", " TWENTY TEN ");
+
+            tmp = tmp.Replace("51ST", " FIFTY FIRST");
+            tmp = tmp.Replace("633", " SIX THREE THREE ");
+            tmp = tmp.Replace("300", " THREE HUNDRED ");
+            tmp = tmp.Replace("39", " THIRTY NINE ");
+            tmp = tmp.Replace("30", " THIRTY ");
+            tmp = tmp.Replace("21", " TWENTY ONE ");
+            tmp = tmp.Replace("24", " TWENTY FOUR ");
+            tmp = tmp.Replace("28", " TWENTY EIGHT ");
+            tmp = tmp.Replace("12", " TWELVE ");
+            tmp = tmp.Replace("13", " THIRTEEN ");
+            tmp = tmp.Replace("17", " SEVENTEEN ");
+            tmp = tmp.Replace("0", " ZERO ");
+            tmp = tmp.Replace("1", " ONE ");
+            tmp = tmp.Replace("2", " TWO ");
+            tmp = tmp.Replace("3", " THREE ");
+            tmp = tmp.Replace("4", " FOUR ");
+            tmp = tmp.Replace("5", " FIVE ");
+            tmp = tmp.Replace("6", " SIX ");
+            tmp = tmp.Replace("7", " SEVEN ");
+            tmp = tmp.Replace("8", " EIGHT ");
+            tmp = tmp.Replace("9", " NINE ");
+
+            tmp = tmp.Replace("$#*!", " SHIT ");
+            tmp = tmp.Replace("VOL.", " VOLUME ");
+            tmp = tmp.Replace("-", " ");
+            tmp = tmp.Replace("&", " AND ");
+            tmp = tmp.Replace("(", "");
+            tmp = tmp.Replace(")", "");
+            tmp = tmp.Replace("!", "");
+            tmp = tmp.Replace("/", " ");
+            tmp = tmp.Replace(".", " ");
+            tmp = tmp.Replace(" II", " I I ");
+            tmp = tmp.Replace(" III", " I I I ");
+            tmp = tmp.Replace(" IV ", " I V ");
+            tmp = tmp.Replace(" VI ", " V I ");
+            tmp = tmp.Replace(" VII ", " V I I ");
+            tmp = tmp.Replace(",", " ");
+            tmp = tmp.Replace(":", " ");
+            tmp = tmp.Replace("?", " ");
+            tmp = tmp.Replace("*", " ");
+            tmp = tmp.Replace("_", " ");
+
             return tmp;
         }
 
@@ -527,5 +916,21 @@ namespace HollyServer
             return false;
         }
 
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                // dispose managed resources
+                if (mClnt != null) mClnt.Dispose();
+            }
+            // free native resources
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
     }
 }

@@ -5,11 +5,31 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/types.h>
+
+#ifndef WIN32
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <poll.h>
+#define NETWORK_ERROR  errno
+
+#else
+#include <winsock2.h>
+#include <Ws2tcpip.h>
+#include <mstcpip.h>
+typedef __int32 int32_t;
+#define poll(a,b,c) WSAPoll(a,b,c)
+#define NETWORK_ERROR WSAGetLastError()
+#pragma comment(lib, "Ws2_32.lib")
+
+
+#endif
+
+#ifndef POLLRDHUP
+#define POLLRDHUP 0
+#endif
+
 
 char server[255];
 unsigned short port;
@@ -32,11 +52,12 @@ struct pollfd toPoll;
 int send_msg(char *data, unsigned int len);
 char *rcv_msg(int *len);
 
-
+#ifndef min
 int min(int a, int b){
 	if(a<b) return a;
 	else return b;
 }
+#endif
 
 int net_setup(char *s_server, char *s_port){
 	strncpy(server, s_server, 254);
@@ -46,6 +67,20 @@ int net_setup(char *s_server, char *s_port){
 		return -1;
 	}
 	port = i;
+
+#ifdef WIN32
+	WSADATA wsaData;
+	int iResult;
+
+	// Initialize Winsock
+	iResult = WSAStartup(MAKEWORD(2,2), &wsaData);
+	if (iResult != 0) {
+		printf("WSAStartup failed: %d\n", iResult);
+		return 1;
+	}
+#endif
+
+
 	return 0;
 }
 
@@ -60,12 +95,12 @@ int net_connect(){
 	memset(&sin, 1, sizeof(struct sockaddr_in));
 	sin.sin_family = AF_INET;
 	sin.sin_port = htons(port);
-	if(inet_aton(server, &(sin.sin_addr))==0){
+	if(inet_pton(AF_INET, server, &(sin.sin_addr))==0){
 		printf("ERR: unknown host %s\n", server);
 	}
 
 	if(connect(sockfd, (struct sockaddr*)&sin, sizeof(struct sockaddr_in))<0){
-		printf("ERR: Couldn't connect: %d\n", errno);
+		printf("ERR: Couldn't connect: %d\n", NETWORK_ERROR);
 		return -1;
 	}
 
@@ -205,7 +240,7 @@ char *rcv_msg(int *len){
 		return 0;
 	}
 
-	int i = recv(sockfd, len, sizeof(unsigned long), MSG_WAITALL);
+	int i = recv(sockfd, (char*)len, sizeof(unsigned long), MSG_WAITALL);
 	if(i!=sizeof(unsigned long)){
 		printf("ERR: Couldn't get header\n");
 		return 0;
