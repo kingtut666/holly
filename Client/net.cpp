@@ -12,6 +12,7 @@
 #include <netinet/in.h>
 #include <netdb.h>
 #include <poll.h>
+#include <unistd.h>
 #define NETWORK_ERROR  errno
 
 #else
@@ -22,13 +23,15 @@ typedef __int32 int32_t;
 #define poll(a,b,c) WSAPoll(a,b,c)
 #define NETWORK_ERROR WSAGetLastError()
 #pragma comment(lib, "Ws2_32.lib")
-
+#define close(a) closesocket(a)
 
 #endif
 
 #ifndef POLLRDHUP
 #define POLLRDHUP 0
 #endif
+
+
 
 
 char server[255];
@@ -101,6 +104,8 @@ int net_connect(){
 
 	if(connect(sockfd, (struct sockaddr*)&sin, sizeof(struct sockaddr_in))<0){
 		printf("ERR: Couldn't connect: %d\n", NETWORK_ERROR);
+		close(sockfd);
+		sockfd = -1;
 		return -1;
 	}
 
@@ -117,7 +122,9 @@ int net_connect(){
 	if(buf==0 || strncmp(buf, msg_config, strlen(msg_config))!=0){
 		//Config message not received
 		printf("ERR: Config message not received\n");
-		free(buf);
+		if(buf==0) printf("   returned 0\n");
+		else printf("   received: %s\n", buf);
+		if(buf!=0) free(buf);
 		return -1;
 	}
 	if(buf!=0) free(buf);
@@ -167,16 +174,25 @@ bool recv_if_possible(int timeout){
 	//printf("recv_if_possible\n");
 	toPoll.revents = 0;
 	int i = poll(&toPoll, 1, timeout);
-	if(i!=1){
+	if(i==-1){
+		close(sockfd);
+		sockfd = -1;
+		return false;
+	}
+	else if(i==0){
 		return true;
 	}
-	if(toPoll.revents & (POLLRDHUP | POLLERR | POLLHUP)) return false;
+	if(toPoll.revents & (POLLRDHUP | POLLERR | POLLHUP)){
+		close(sockfd);
+		sockfd=-1;
+		return false;
+	}
 
 
 	//Handle Commands
 	int len;
 	char *msg = rcv_msg(&len);
-	if(msg==0) return true;
+	if(msg==0) return false;
 
 	if(strncmp(msg, msg_start, min(len, strlen(msg_start)))==0){
 		printf("Started\n");
@@ -228,6 +244,8 @@ int send_msg(char *data, unsigned int len){
 	sent = send(sockfd, buf, len+sizeof(len), 0);
 	if(sent != len+sizeof(len)){
 		printf("ERR: send was short\n");
+		close(sockfd);
+		sockfd = -1;
 		return -1;
 	}
 	free(buf);
@@ -235,6 +253,10 @@ int send_msg(char *data, unsigned int len){
 }
 
 char *rcv_msg(int *len){
+	if(sockfd==-1){
+		printf("ERR: Socket closed/invalid\n");
+		return 0;
+	}
 	if(len==0){
 		printf("ERR: Invalid len\n");
 		return 0;
